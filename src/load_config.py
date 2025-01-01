@@ -8,13 +8,14 @@ def load_config():
     try:
         with open('config.json') as f:
             config = json.load(f)
+            config['TRADE_INTERVAL'] = config.get('TRADE_INTERVAL', 60)
             return config
     except FileNotFoundError:
         logger.error("File config.json tidak ditemukan")
         exit(1)
 
 def validate_config(config):
-    required_keys = ['SYMBOL', 'TIMEFRAME']
+    required_keys = ['SYMBOL', 'TIMEFRAME', 'EMA_SHORT_PERIOD', 'EMA_LONG_PERIOD']
     if not all(key in config for key in required_keys):
         logger.error("Konfigurasi tidak valid")
         exit(1)

@@ -1,51 +1,45 @@
-import ccxt
 import logging
 import time
-from datetime import datetime
 import json
-import os
-
-import src.fetch_market_data as fetch_market_data
-import src.trading_strategy as trading_strategy
-import src.execute_trade as execute_trade
-import src.calculate_rsi as calculate_rsi
-import src.calculate_ema as calculate_ema
-from src.load_config import load_config, validate_config
+from binance.spot import Spot as Client
 from src.initialize_exchange import initialize_exchange
-from src.logger import setup_logger
+from src.fetch_market_data import fetch_market_data_from_exchange
+from src.trading_strategy import TradingStrategy
 
-# Setup logger
-logger = setup_logger(__name__)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def load_config(filename='config.json'):
+    with open(filename, 'r') as f:
+        return json.load(f)
+
+def execute_trade(client, symbol, side, quantity):
+    try:
+        order = client.new_order(symbol=symbol, side=side, type='MARKET', quantity=quantity)
+        logger.info(f"Order executed: {order}")
+    except Exception as e:
+        logger.error(f"Error executing trade: {e}")
 
 def main():
     config = load_config()
-    config = validate_config(config)
+    client = initialize_exchange()
+    symbol = config['SYMBOL']
+    timeframe = config['TIMEFRAME']
+    quantity = config['QUANTITY']
 
-    # Load API Key and Secret from Environment Variables
-    api_key = os.environ.get('API_KEY_BINANCE')
-    api_secret = os.environ.get('API_SECRET_BINANCE')
-
-    if not api_key or not api_secret:
-        logger.error("API Key or Secret not found in environment variables.")
-        exit(1)
-
-    exchange = initialize_exchange(api_key, api_secret)
+    trading_strategy = TradingStrategy(config)
 
     while True:
         try:
-            market_data = fetch_market_data.fetch_market_data(exchange, config['SYMBOL'], config['TIMEFRAME'])
-            if market_data is not None:
-                side = trading_strategy.trading_strategy(market_data)
-                if side is not None:
-                    rsi = calculate_rsi.calculate_rsi(market_data)
-                    ema = calculate_ema.calculate_ema(market_data)
-                    logger.info(f"RSI: {rsi}, EMA: {ema}, Side: {side}")
-                    #execute_trade.execute_trade(exchange, config['SYMBOL'], side)
-        except ccxt.BaseError as e:
-            logger.error(f"Error exchange: {e}")
+            market_data = fetch_market_data_from_exchange(symbol, timeframe)
+            side = trading_strategy.trading_strategy_ema(market_data)
+            if side is not None:
+                execute_trade(client, symbol, side, quantity)
+            else:
+                logger.info("No trade executed.")
         except Exception as e:
             logger.error(f"Error: {e}")
-        time.sleep(60)
+        time.sleep(config['TRADE_INTERVAL'])
 
 if __name__ == '__main__':
     main()

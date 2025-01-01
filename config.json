@@ -1,8 +1,12 @@
 {
     "EXCHANGE_ID": "binance",
-    "SYMBOL": "BTC/USDT",
+    "SYMBOL": "BTCUSDT",
     "TIMEFRAME": "1m",
+    "QUANTITY": 0.01,
     "STRATEGY": "EMA",
     "EMA_SHORT_PERIOD": 10,
-    "EMA_LONG_PERIOD": 30
+    "EMA_LONG_PERIOD": 30,
+    "RSI_PERIOD": 14,
+    "TRADE_AMOUNT": 0.01,
+    "TRADE_INTERVAL": 60
 }
