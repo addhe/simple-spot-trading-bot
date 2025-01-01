@@ -1,0 +1,8 @@
+{
+    "EXCHANGE_ID": "binance",
+    "SYMBOL": "BTC/USDT",
+    "TIMEFRAME": "1m",
+    "STRATEGY": "EMA",
+    "EMA_SHORT_PERIOD": 10,
+    "EMA_LONG_PERIOD": 30
+}
