@@ -1,0 +1,8 @@
+python-binance==0.7.9
+schedule==1.1.0
+requests==2.25.1
+pickle==4.0.0
+importlib==1.0.4
+hashlib==1.0.2
+pandas==1.3.5
+numpy==1.21.2

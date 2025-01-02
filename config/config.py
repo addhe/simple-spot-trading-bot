@@ -1,0 +1,2 @@
+SYMBOL = 'BTCUSDT'
+INTERVAL = '1m'
