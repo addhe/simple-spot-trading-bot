@@ -15,7 +15,7 @@ logging.basicConfig(filename='bot.log', level=logging.ERROR)
 
 class BotTrading:
     def __init__(self):
-        self.client = Client(settings['API_KEY'], settings['API_SECRET'], base_url=settings['BASE_URL'])
+        self.client = Client(settings['API_KEY'], settings['API_SECRET'])
         self.strategy = PriceActionStrategy(SYMBOL)
         self.latest_activity = self.load_latest_activity()
         self.settings_hash = self.get_settings_hash()
