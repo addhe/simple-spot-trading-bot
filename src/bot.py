@@ -3,7 +3,7 @@ import os
 import schedule
 import time
 from binance.client import Client
-from config.settings import settings
+from ..config.settings import settings
 from config.config import SYMBOL, INTERVAL
 from strategy import PriceActionStrategy
 from notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
