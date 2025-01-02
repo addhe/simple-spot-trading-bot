@@ -4,7 +4,7 @@ from binance.spot import Spot as Client
 # Setup logger
 logger = logging.getLogger(__name__)
 
-def fetch_market_data_from_exchange(symbol, timeframe):
+def fetch_market_data_from_exchange(client, symbol, timeframe):
     try:
         # Cek format simbol
         if not isinstance(symbol, str) or not symbol.isupper():
@@ -17,7 +17,6 @@ def fetch_market_data_from_exchange(symbol, timeframe):
             return None
 
         # Dapatkan data harga
-        client = Client(base_url="https://testnet.binance.vision")
         market_data = client.klines(symbol, timeframe, limit=100)
 
         if market_data:

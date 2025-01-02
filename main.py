@@ -31,12 +31,22 @@ def main():
 
     while True:
         try:
-            market_data = fetch_market_data_from_exchange(symbol, timeframe)
-            side = trading_strategy.trading_strategy_ema(market_data)
-            if side is not None:
-                execute_trade(client, symbol, side, quantity)
+            market_data = fetch_market_data_from_exchange(client, symbol, timeframe)
+            if market_data:
+                side = trading_strategy.trading_strategy_ema(market_data)
+                if side is not None:
+                    if side == 'BUY':
+                        buy_price = float(market_data[-1][4])
+                        execute_trade(client, symbol, side, quantity)
+                    elif side == 'SELL':
+                        if trading_strategy.check_take_profit(market_data, buy_price):
+                            execute_trade(client, symbol, side, quantity)
+                        elif trading_strategy.check_stop_loss(market_data, buy_price):
+                            execute_trade(client, symbol, side, quantity)
+                else:
+                    logger.info("No trade executed.")
             else:
-                logger.info("No trade executed.")
+                logger.error("Failed to fetch market data.")
         except Exception as e:
             logger.error(f"Error: {e}")
         time.sleep(config['TRADE_INTERVAL'])

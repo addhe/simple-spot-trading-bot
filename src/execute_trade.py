@@ -2,6 +2,7 @@ import logging
 from binance.spot import Spot as Client
 from binance.lib.utils import config_logging
 from binance.error import ClientError
+from src.notification_telegram import send_message_telegram
 
 # Konfigurasi logging
 config_logging(logging, logging.INFO)
@@ -32,6 +33,9 @@ def execute_trade(api_key, api_secret, symbol, side, amount):
                 quantity=amount,
                 price=ticker['price']
             )
+            logger.info(f"Trade executed: {order}")
+            message = f"Transaksi {side} {symbol} selesai! Quantity: {amount}"
+            send_message_telegram(message)
         elif side == 'sell':
             # Create a sell order
             order = client.new_order(
@@ -42,6 +46,9 @@ def execute_trade(api_key, api_secret, symbol, side, amount):
                 quantity=amount,
                 price=ticker['price']
             )
+            logger.info(f"Trade executed: {order}")
+            message = f"Transaksi {side} {symbol} selesai! Quantity: {amount}"
+            send_message_telegram(message)
         else:
             logger.error("Invalid side, cannot execute trade")
             return
@@ -51,12 +58,3 @@ def execute_trade(api_key, api_secret, symbol, side, amount):
         logger.error(f"Error executing trade: {e.status_code}, {e.error_code}, {e.error_message}")
     except Exception as e:
         logger.error(f"Error executing trade: {e}")
-
-# Contoh penggunaan
-api_key = "YOUR_API_KEY"
-api_secret = "YOUR_API_SECRET"
-symbol = "BTCUSDT"
-side = "buy"
-amount = 0.01
-
-execute_trade(api_key, api_secret, symbol, side, amount)

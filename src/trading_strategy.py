@@ -1,4 +1,5 @@
 import logging
+import numpy as np
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -6,6 +7,8 @@ logger = logging.getLogger(__name__)
 class TradingStrategy:
     def __init__(self, config):
         self.config = config
+        self.take_profit = config['TAKE_PROFIT']
+        self.stop_loss = config['STOP_LOSS']
 
     def ema(self, market_data, period):
         ema = []
@@ -20,8 +23,22 @@ class TradingStrategy:
         ema_short = self.ema(market_data, self.config['EMA_SHORT_PERIOD'])
         ema_long = self.ema(market_data, self.config['EMA_LONG_PERIOD'])
         if ema_short[-1] > ema_long[-1]:
-            return 'buy'
+            return 'BUY'
         elif ema_short[-1] < ema_long[-1]:
-            return 'sell'
+            return 'SELL'
         else:
             return None
+
+    def check_take_profit(self, market_data, buy_price):
+        current_price = float(market_data[-1][4])
+        profit = (current_price - buy_price) / buy_price * 100
+        if profit >= self.take_profit:
+            return True
+        return False
+
+    def check_stop_loss(self, market_data, buy_price):
+        current_price = float(market_data[-1][4])
+        loss = (buy_price - current_price) / buy_price * 100
+        if loss >= self.stop_loss:
+            return True
+        return False
