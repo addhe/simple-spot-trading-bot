@@ -3,7 +3,7 @@ import os
 
 def kirim_notifikasi_telegram(pesan):
     token = os.environ['TELEGRAM_TOKEN']
-    chat_id = os.environ['TELEGRAM_CHAT_ID']
+    chat_id = os.environ['TELEGRAM_GROUP_ID']
     url = f'https://api.telegram.org/bot{token}/sendMessage'
     params = {
         'chat_id': chat_id,
