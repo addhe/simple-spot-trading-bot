@@ -1,4 +1,3 @@
-# src/bot.py
 import os
 import schedule
 import time
@@ -19,6 +18,7 @@ class BotTrading:
         self.strategy = PriceActionStrategy(SYMBOL)
         self.latest_activity = self.load_latest_activity()
         self.settings_hash = self.get_settings_hash()
+        self.historical_data = self.load_historical_data()
 
     def load_latest_activity(self):
         try:
@@ -37,6 +37,17 @@ class BotTrading:
     def save_latest_activity(self):
         with open('latest_activity.pkl', 'wb') as f:
             pickle.dump(self.latest_activity, f)
+
+    def load_historical_data(self):
+        try:
+            with open('historical_data.pkl', 'rb') as f:
+                return pickle.load(f)
+        except FileNotFoundError:
+            return []
+
+    def save_historical_data(self):
+        with open('historical_data.pkl', 'wb') as f:
+            pickle.dump(self.historical_data, f)
 
     def get_settings_hash(self):
         with open('config/settings.py', 'r') as f:
@@ -67,36 +78,51 @@ class BotTrading:
             self.strategy.check_price(self.client)
             # Implementasi logika strategi Price Action
             symbol_ticker = self.client.get_symbol_ticker(symbol=SYMBOL)
-            price = symbol_ticker['price']
-            if price > 10000:
+            price = float(symbol_ticker['price'])
+
+            # Tentukan harga beli dan jual dinamis
+            buy_price = self.calculate_dynamic_buy_price()
+            sell_price = self.calculate_dynamic_sell_price()
+
+            if price > buy_price:
                 # Implementasi aksi trading
                 quantity = 0.1
-                self.client.place_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=10000)
+                self.client.place_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=buy_price)
                 self.latest_activity = {
                     'buy': True,
                     'sell': False,
                     'symbol': SYMBOL,
                     'quantity': quantity,
-                    'price': 10000,
+                    'price': buy_price,
                     'estimasi_profit': 0
                 }
                 self.save_latest_activity()
-                notifikasi_buy(SYMBOL, quantity, 10000)
-            elif price < 9000:
+                notifikasi_buy(SYMBOL, quantity, buy_price)
+            elif price < sell_price:
                 # Implementasi aksi trading
                 quantity = 0.1
-                self.client.place_order(symbol=SYMBOL, side='SELL', type='LIMIT', quantity=quantity, price=9000)
-                estimasi_profit = price - 9000
+                self.client.place_order(symbol=SYMBOL, side='SELL', type='LIMIT', quantity=quantity, price=sell_price)
+                estimasi_profit = price - sell_price
                 self.latest_activity = {
                     'buy': False,
                     'sell': True,
                     'symbol': SYMBOL,
                     'quantity': quantity,
-                    'price': 9000,
+                    'price': sell_price,
                     'estimasi_profit': estimasi_profit
                 }
                 self.save_latest_activity()
-                notifikasi_sell(SYMBOL, quantity, 9000, estimasi_profit)
+                notifikasi_sell(SYMBOL, quantity, sell_price, estimasi_profit)
+
+            # Simpan data historis
+            self.historical_data.append({
+                'timestamp': time.time(),
+                'price': price,
+                'buy_price': buy_price,
+                'sell_price': sell_price
+            })
+            self.save_historical_data()
+
             account_info = self.client.get_account()
             notifikasi_balance(account_info['balances'][0]['free'])
 
@@ -138,3 +164,19 @@ class BotTrading:
             logging.error(f"Error: {e}")
             time.sleep(1)
             self.check_price()
+
+    def calculate_dynamic_buy_price(self):
+        # Implementasi logika untuk menghitung harga beli dinamis
+        # Misalnya, menggunakan rata-rata harga historis
+        if not self.historical_data:
+            return 10000  # Default jika tidak ada data historis
+        prices = [data['price'] for data in self.historical_data]
+        return sum(prices) / len(prices) * 0.95  # 5% di bawah rata-rata
+
+    def calculate_dynamic_sell_price(self):
+        # Implementasi logika untuk menghitung harga jual dinamis
+        # Misalnya, menggunakan rata-rata harga historis
+        if not self.historical_data:
+            return 9000  # Default jika tidak ada data historis
+        prices = [data['price'] for data in self.historical_data]
+        return sum(prices) / len(prices) * 1.05  # 5% di atas rata-rata
