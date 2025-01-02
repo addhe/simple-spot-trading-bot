@@ -2,7 +2,7 @@ import os
 import schedule
 import time
 from binance.client import Client
-from config.settings import settings
+from config.settings import API_KEY, API_SECRET, BASE_URL
 from strategy import PriceActionStrategy
 from notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
 import pickle
