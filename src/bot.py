@@ -1,12 +1,13 @@
+# src/bot.py
 import os
 import schedule
 import time
 from binance.client import Client
-from config.settings import API_KEY, API_SECRET, BASE_URL
+from config.settings import settings
+from config.config import SYMBOL, INTERVAL
 from strategy import PriceActionStrategy
 from notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
 import pickle
-import importlib
 import hashlib
 import logging
 
@@ -14,8 +15,8 @@ logging.basicConfig(filename='bot.log', level=logging.ERROR)
 
 class BotTrading:
     def __init__(self):
-        self.client = Client(os.environ['API_KEY_SPOT_BINANCE'], os.environ['API_SECRET_SPOT_BINANCE'], base_url='https://testnet.binance.vision/api')
-        self.strategy = PriceActionStrategy()
+        self.client = Client(settings['API_KEY'], settings['API_SECRET'], base_url=settings['BASE_URL'])
+        self.strategy = PriceActionStrategy(SYMBOL)
         self.latest_activity = self.load_latest_activity()
         self.settings_hash = self.get_settings_hash()
 
@@ -46,7 +47,6 @@ class BotTrading:
         current_hash = self.get_settings_hash()
         if current_hash != self.settings_hash:
             self.settings_hash = current_hash
-            importlib.reload(settings)
             print("Settings telah berubah, reload config...")
 
     def run(self):
@@ -66,75 +66,74 @@ class BotTrading:
             # Implementasi strategi Price Action
             self.strategy.check_price(self.client)
             # Implementasi logika strategi Price Action
-            if self.data['price'] > 10000:
+            symbol_ticker = self.client.get_symbol_ticker(symbol=SYMBOL)
+            price = symbol_ticker['price']
+            if price > 10000:
                 # Implementasi aksi trading
                 quantity = 0.1
-                price = 10000
-                self.client.place_order(symbol='BTCUSDT', side='BUY', type='LIMIT', quantity=quantity, price=price)
+                self.client.place_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=10000)
                 self.latest_activity = {
                     'buy': True,
                     'sell': False,
-                    'symbol': 'BTCUSDT',
+                    'symbol': SYMBOL,
                     'quantity': quantity,
-                    'price': price,
+                    'price': 10000,
                     'estimasi_profit': 0
                 }
                 self.save_latest_activity()
-                notifikasi_buy('BTCUSDT', quantity, price)
-            elif self.data['price'] < 9000:
+                notifikasi_buy(SYMBOL, quantity, 10000)
+            elif price < 9000:
                 # Implementasi aksi trading
                 quantity = 0.1
-                price = 9000
-                self.client.place_order(symbol='BTCUSDT', side='SELL', type='LIMIT', quantity=quantity, price=price)
-                estimasi_profit = self.client.get_symbol_ticker(symbol='BTCUSDT')['price'] - price
+                self.client.place_order(symbol=SYMBOL, side='SELL', type='LIMIT', quantity=quantity, price=9000)
+                estimasi_profit = price - 9000
                 self.latest_activity = {
                     'buy': False,
                     'sell': True,
-                    'symbol': 'BTCUSDT',
+                    'symbol': SYMBOL,
                     'quantity': quantity,
-                    'price': price,
+                    'price': 9000,
                     'estimasi_profit': estimasi_profit
                 }
                 self.save_latest_activity()
-                notifikasi_sell('BTCUSDT', quantity, price, estimasi_profit)
-            notifikasi_balance(self.client.get_account()['balances'][0]['free'])
+                notifikasi_sell(SYMBOL, quantity, 9000, estimasi_profit)
+            account_info = self.client.get_account()
+            notifikasi_balance(account_info['balances'][0]['free'])
 
             # Cek jika terdapat aktivitas pembelian atau penjualan terakhir
             if self.latest_activity['buy']:
                 # Cek jika harga saat ini lebih tinggi dari harga pembelian
-                if self.data['price'] > self.latest_activity['price']:
+                if price > self.latest_activity['price']:
                     # Implementasi aksi trading untuk menjual
                     quantity = self.latest_activity['quantity']
-                    price = self.data['price']
-                    self.client.place_order(symbol='BTCUSDT', side='SELL', type='LIMIT', quantity=quantity, price=price)
+                    self.client.place_order(symbol=SYMBOL, side='SELL', type='LIMIT', quantity=quantity, price=price)
                     estimasi_profit = price - self.latest_activity['price']
                     self.latest_activity = {
                         'buy': False,
                         'sell': True,
-                        'symbol': 'BTCUSDT',
+                        'symbol': SYMBOL,
                         'quantity': quantity,
                         'price': price,
                         'estimasi_profit': estimasi_profit
                     }
                     self.save_latest_activity()
-                    notifikasi_sell('BTCUSDT', quantity, price, estimasi_profit)
+                    notifikasi_sell(SYMBOL, quantity, price, estimasi_profit)
             elif self.latest_activity['sell']:
                 # Cek jika harga saat ini lebih rendah dari harga penjualan
-                if self.data['price'] < self.latest_activity['price']:
+                if price < self.latest_activity['price']:
                     # Implementasi aksi trading untuk membeli
                     quantity = self.latest_activity['quantity']
-                    price = self.data['price']
-                    self.client.place_order(symbol='BTCUSDT', side='BUY', type='LIMIT', quantity=quantity, price=price)
+                    self.client.place_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=price)
                     self.latest_activity = {
                         'buy': True,
                         'sell': False,
-                        'symbol': 'BTCUSDT',
+                        'symbol': SYMBOL,
                         'quantity': quantity,
                         'price': price,
                         'estimasi_profit': 0
                     }
                     self.save_latest_activity()
-                    notifikasi_buy('BTCUSDT', quantity, price)
+                    notifikasi_buy(SYMBOL, quantity, price)
         except Exception as e:
             logging.error(f"Error: {e}")
             time.sleep(1)
