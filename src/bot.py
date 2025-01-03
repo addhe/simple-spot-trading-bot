@@ -84,6 +84,19 @@ class BotTrading:
             time.sleep(1)
             self.run()
 
+    def calculate_dynamic_quantity(self, action):
+        """Menghitung quantity berdasarkan saldo dan persentase yang diinginkan."""
+        usdt_balance = 0
+        for balance in self.client.get_account()['balances']:
+            if balance['asset'] == 'USDT':
+                usdt_balance = float(balance['free'])
+                break
+
+        # Misalkan kita ingin menggunakan 10% dari saldo USDT untuk setiap transaksi
+        percentage = 0.10
+        quantity = (usdt_balance * percentage) / self.strategy.check_price(self.client)[1]  # Harga saat ini
+        return round(quantity, 2)  # Pembulatan ke 2 desimal
+
     def check_price(self):
         try:
             # Implementasi strategi Price Action
@@ -95,9 +108,10 @@ class BotTrading:
             # Pastikan price adalah float
             price = float(price)
 
+            quantity = self.calculate_dynamic_quantity(action)  # Hitung quantity dinamis
+
             if action == 'BUY':
-                logging.info(f"Melakukan pembelian {SYMBOL} pada harga {price}")
-                quantity = 0.1  # Sesuaikan dengan jumlah yang valid
+                logging.info(f"Melakukan pembelian {SYMBOL} pada harga {price} sebanyak {quantity}")
                 self.client.create_test_order(
                     symbol=SYMBOL,
                     side='BUY',
@@ -116,13 +130,12 @@ class BotTrading:
                 }
                 self.save_latest_activity()
                 notifikasi_buy(SYMBOL, quantity, price)
-                notifikasi_balance(self.client)
+                notifikasi_balance(self.client)  # Memperbarui saldo setelah pembelian
 
             elif action == 'SELL':
                 estimasi_profit = price - self.latest_activity['price'] if self.latest_activity['price'] else 0
                 if estimasi_profit > 0:  # Hanya jual jika ada profit
-                    logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price}")
-                    quantity = 0.1  # Sesuaikan dengan jumlah yang valid
+                    logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price} sebanyak {quantity}")
                     self.client.create_test_order(
                         symbol=SYMBOL,
                         side='SELL',
@@ -141,7 +154,9 @@ class BotTrading:
                     }
                     self.save_latest_activity()
                     notifikasi_sell(SYMBOL, quantity, price, estimasi_profit)
-                    notifikasi_balance(self.client)
+
+                    # Memperbarui saldo setelah penjualan
+                    notifikasi_balance(self.client)  # Memanggil notifikasi balance setelah transaksi
                 else:
                     logging.info(f"Tidak melakukan penjualan {SYMBOL} karena estimasi profit negatif: {estimasi_profit}")
 
