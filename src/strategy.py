@@ -10,9 +10,9 @@ class PriceActionStrategy:
         self.client.API_URL = 'https://testnet.binance.vision/api'
         self.data = pd.DataFrame()
 
-    def check_price(self) -> tuple:
+    def check_price(self, client: Client) -> tuple:
         try:
-            self.data = self.client.get_symbol_ticker(symbol=self.symbol)
+            self.data = client.get_symbol_ticker(symbol=self.symbol)
             current_price = float(self.data['price'])
 
             logging.debug(f"Harga saat ini untuk {self.symbol}: {current_price}, Type: {type(current_price)}")
