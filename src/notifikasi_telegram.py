@@ -1,6 +1,7 @@
 # src/notifikasi_telegram.py
 import requests
 import os
+from config.config import SYMBOL  # Mengimpor SYMBOL dari konfigurasi
 
 def kirim_notifikasi_telegram(pesan):
     token = os.environ['TELEGRAM_TOKEN']
@@ -28,26 +29,19 @@ def notifikasi_balance(client):
     try:
         account_info = client.get_account()  # Mengambil informasi akun dari API
         usdt_balance = 0
-        crypto_balances = []
+        symbol_balance = 0
 
-        # Menghitung saldo USDT dan simbol trading lainnya
+        # Menghitung saldo USDT dan simbol yang ditentukan
         for balance in account_info['balances']:
             asset = balance['asset']
             free = float(balance['free'])
             if asset == 'USDT':
                 usdt_balance = free
-            elif free > 0:
-                crypto_balances.append(f"{asset}: {free}")
+            elif asset == SYMBOL:
+                symbol_balance = free
 
         # Menyusun pesan notifikasi
-        pesan = f'Balance USDT: {usdt_balance}\n'
-        if crypto_balances:
-            # Batasi jumlah simbol yang ditampilkan
-            limited_balances = crypto_balances[:10]  # Tampilkan hanya 10 simbol teratas
-            pesan += 'Saldo Kripto:\n' + '\n'.join(limited_balances)
-            pesan += f"\n... dan {len(crypto_balances) - 10} simbol lainnya."  # Menyebutkan jumlah simbol lainnya
-        else:
-            pesan += 'Tidak ada saldo kripto yang tersedia.'
+        pesan = f'Balance USDT: {usdt_balance}\n{SYMBOL} Balance: {symbol_balance}'
 
         kirim_notifikasi_telegram(pesan)
 

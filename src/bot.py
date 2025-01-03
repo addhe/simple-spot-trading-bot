@@ -116,6 +116,7 @@ class BotTrading:
                 }
                 self.save_latest_activity()
                 notifikasi_buy(SYMBOL, quantity, price)
+                notifikasi_balance(self.client)
 
             elif action == 'SELL':
                 estimasi_profit = price - self.latest_activity['price'] if self.latest_activity['price'] else 0
@@ -140,11 +141,9 @@ class BotTrading:
                     }
                     self.save_latest_activity()
                     notifikasi_sell(SYMBOL, quantity, price, estimasi_profit)
+                    notifikasi_balance(self.client)
                 else:
                     logging.info(f"Tidak melakukan penjualan {SYMBOL} karena estimasi profit negatif: {estimasi_profit}")
-
-            # Mengambil informasi akun dan mengirim notifikasi saldo
-            notifikasi_balance(self.client)  # Pastikan ini mengirimkan objek klien
 
             # Simpan data historis
             self.historical_data.append({
