@@ -73,6 +73,7 @@ class BotTrading:
             logging.info("Config telah berubah, reload config...")
 
     def run(self):
+        logging.info("Bot trading dimulai...")
         try:
             schedule.every(1).minutes.do(self.check_price)
             while True:
@@ -96,8 +97,9 @@ class BotTrading:
             price = float(price)
     
             if action == 'BUY':
+                logging.info(f"Melakukan pembelian {SYMBOL} pada harga {price}")
                 quantity = 0.1
-                self.client.place_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=price)
+                self.client.create_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=price)
                 self.latest_activity = {
                     'buy': True,
                     'sell': False,
@@ -108,10 +110,11 @@ class BotTrading:
                 }
                 self.save_latest_activity()
                 notifikasi_buy(SYMBOL, quantity, price)
-    
+            
             elif action == 'SELL':
+                logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price}")
                 quantity = 0.1
-                self.client.place_order(symbol=SYMBOL, side='SELL', type='LIMIT', quantity=quantity, price=price)
+                self.client.create_order(symbol=SYMBOL, side='SELL', type='LIMIT', quantity=quantity, price=price)
                 estimasi_profit = price - self.latest_activity['price']
                 self.latest_activity = {
                     'buy': False,
