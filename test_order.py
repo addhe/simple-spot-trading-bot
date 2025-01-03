@@ -27,7 +27,8 @@ def test_api():
             side='BUY',
             type='LIMIT',
             quantity=quantity,
-            price=price
+            price=price,
+            timeInForce='GTC'  # Menambahkan parameter timeInForce
         )
         logging.info("Order percobaan berhasil dilakukan.")
     except Exception as e:
