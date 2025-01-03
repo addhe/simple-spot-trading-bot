@@ -37,10 +37,23 @@ class BotTrading:
                 'price': 0,
                 'estimasi_profit': 0
             }
+        except Exception as e:
+            logging.error(f"Error saat membaca latest_activity.pkl: {e}")
+            return {
+                'buy': False,
+                'sell': False,
+                'symbol': '',
+                'quantity': 0,
+                'price': 0,
+                'estimasi_profit': 0
+            }
 
     def save_latest_activity(self) -> None:
-        with open('latest_activity.pkl', 'wb') as f:
-            pickle.dump(self.latest_activity, f)
+        try:
+            with open('latest_activity.pkl', 'wb') as f:
+                pickle.dump(self.latest_activity, f)
+        except Exception as e:
+            logging.error(f"Error saat menyimpan latest_activity.pkl: {e}")
 
     def load_historical_data(self) -> list:
         try:
@@ -49,10 +62,16 @@ class BotTrading:
         except FileNotFoundError:
             logging.warning("File historical_data.pkl tidak ditemukan, menggunakan default.")
             return []
+        except Exception as e:
+            logging.error(f"Error saat membaca historical_data.pkl: {e}")
+            return []
 
     def save_historical_data(self) -> None:
-        with open('historical_data.pkl', 'wb') as f:
-            pickle.dump(self.historical_data, f)
+        try:
+            with open('historical_data.pkl', 'wb') as f:
+                pickle.dump(self.historical_data, f)
+        except Exception as e:
+            logging.error(f"Error saat menyimpan historical_data.pkl: {e}")
 
     def get_config_hash(self) -> str:
         try:
