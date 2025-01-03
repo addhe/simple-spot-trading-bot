@@ -10,7 +10,9 @@ import pickle
 import hashlib
 import logging
 
-logging.basicConfig(filename='bot.log', level=logging.ERROR)
+# Konfigurasi logging
+logging.basicConfig(level=logging.DEBUG, filename='bot.log', 
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 class BotTrading:
     def __init__(self):
@@ -25,6 +27,7 @@ class BotTrading:
             with open('latest_activity.pkl', 'rb') as f:
                 return pickle.load(f)
         except FileNotFoundError:
+            logging.warning("File latest_activity.pkl tidak ditemukan, menggunakan default.")
             return {
                 'buy': False,
                 'sell': False,
@@ -43,22 +46,27 @@ class BotTrading:
             with open('historical_data.pkl', 'rb') as f:
                 return pickle.load(f)
         except FileNotFoundError:
+            logging.warning("File historical_data.pkl tidak ditemukan, menggunakan default.")
             return []
 
     def save_historical_data(self):
         with open('historical_data.pkl', 'wb') as f:
             pickle.dump(self.historical_data, f)
 
-    def get_settings_hash(self):
-        with open('config/settings.py', 'r') as f:
-            settings_code = f.read()
-        return hashlib.md5(settings_code.encode()).hexdigest()
+    def get_config_hash(self):
+        try:
+            with open('config/config.py', 'r') as f:
+                settings_code = f.read()
+            return hashlib.md5(settings_code.encode()).hexdigest()
+        except Exception as e:
+            logging.error(f"Error saat membaca config/config.py: {e}")
+            return None
 
-    def check_settings_change(self):
-        current_hash = self.get_settings_hash()
-        if current_hash != self.settings_hash:
+    def check_config_change(self):
+        current_hash = self.get_config_hash()
+        if current_hash and current_hash != self.settings_hash:
             self.settings_hash = current_hash
-            print("Settings telah berubah, reload config...")
+            logging.info("Settings telah berubah, reload config...")
 
     def run(self):
         try:
@@ -68,106 +76,63 @@ class BotTrading:
                 schedule.run_pending()
                 time.sleep(1)
         except Exception as e:
-            logging.error(f"Error: {e}")
+            logging.error(f"Error dalam run loop: {e}")
             time.sleep(1)
             self.run()
 
     def check_price(self):
         try:
             # Implementasi strategi Price Action
-            self.strategy.check_price(self.client)
-            # Implementasi logika strategi Price Action
-            symbol_ticker = self.client.get_symbol_ticker(symbol=SYMBOL)
-            price = float(symbol_ticker['price'])
-
-            # Tentukan harga beli dan jual dinamis
-            buy_price = self.calculate_dynamic_buy_price()
-            sell_price = self.calculate_dynamic_sell_price()
-
-            if price > buy_price:
-                # Implementasi aksi trading
+            action, price = self.strategy.check_price(self.client)
+    
+            if action == 'BUY':
                 quantity = 0.1
-                self.client.place_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=buy_price)
+                self.client.place_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=price)
                 self.latest_activity = {
                     'buy': True,
                     'sell': False,
                     'symbol': SYMBOL,
                     'quantity': quantity,
-                    'price': buy_price,
+                    'price': price,
                     'estimasi_profit': 0
                 }
                 self.save_latest_activity()
-                notifikasi_buy(SYMBOL, quantity, buy_price)
-            elif price < sell_price:
-                # Implementasi aksi trading
+                notifikasi_buy(SYMBOL, quantity, price)
+    
+            elif action == 'SELL':
                 quantity = 0.1
-                self.client.place_order(symbol=SYMBOL, side='SELL', type='LIMIT', quantity=quantity, price=sell_price)
-                estimasi_profit = price - sell_price
+                self.client.place_order(symbol=SYMBOL, side='SELL', type='LIMIT', quantity=quantity, price=price)
+                estimasi_profit = price - self.latest_activity['price']
                 self.latest_activity = {
                     'buy': False,
                     'sell': True,
                     'symbol': SYMBOL,
                     'quantity': quantity,
-                    'price': sell_price,
+                    'price': price,
                     'estimasi_profit': estimasi_profit
                 }
                 self.save_latest_activity()
-                notifikasi_sell(SYMBOL, quantity, sell_price, estimasi_profit)
-
+                notifikasi_sell(SYMBOL, quantity, price, estimasi_profit)
+    
             # Simpan data historis
             self.historical_data.append({
                 'timestamp': time.time(),
                 'price': price,
-                'buy_price': buy_price,
-                'sell_price': sell_price
+                'buy_price': self.calculate_dynamic_buy_price(),
+                'sell_price': self.calculate_dynamic_sell_price()
             })
             self.save_historical_data()
-
+    
             account_info = self.client.get_account()
             notifikasi_balance(account_info['balances'][0]['free'])
-
-            # Cek jika terdapat aktivitas pembelian atau penjualan terakhir
-            if self.latest_activity['buy']:
-                # Cek jika harga saat ini lebih tinggi dari harga pembelian
-                if price > self.latest_activity['price']:
-                    # Implementasi aksi trading untuk menjual
-                    quantity = self.latest_activity['quantity']
-                    self.client.place_order(symbol=SYMBOL, side='SELL', type='LIMIT', quantity=quantity, price=price)
-                    estimasi_profit = price - self.latest_activity['price']
-                    self.latest_activity = {
-                        'buy': False,
-                        'sell': True,
-                        'symbol': SYMBOL,
-                        'quantity': quantity,
-                        'price': price,
-                        'estimasi_profit': estimasi_profit
-                    }
-                    self.save_latest_activity()
-                    notifikasi_sell(SYMBOL, quantity, price, estimasi_profit)
-            elif self.latest_activity['sell']:
-                # Cek jika harga saat ini lebih rendah dari harga penjualan
-                if price < self.latest_activity['price']:
-                    # Implementasi aksi trading untuk membeli
-                    quantity = self.latest_activity['quantity']
-                    self.client.place_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=price)
-                    self.latest_activity = {
-                        'buy': True,
-                        'sell': False,
-                        'symbol': SYMBOL,
-                        'quantity': quantity,
-                        'price': price,
-                        'estimasi_profit': 0
-                    }
-                    self.save_latest_activity()
-                    notifikasi_buy(SYMBOL, quantity, price)
+    
         except Exception as e:
-            logging.error(f"Error: {e}")
+            logging.error(f"Error dalam check_price: {e}")
             time.sleep(1)
             self.check_price()
 
     def calculate_dynamic_buy_price(self):
         # Implementasi logika untuk menghitung harga beli dinamis
-        # Misalnya, menggunakan rata-rata harga historis
         if not self.historical_data:
             return 10000  # Default jika tidak ada data historis
         prices = [data['price'] for data in self.historical_data]
@@ -175,7 +140,6 @@ class BotTrading:
 
     def calculate_dynamic_sell_price(self):
         # Implementasi logika untuk menghitung harga jual dinamis
-        # Misalnya, menggunakan rata-rata harga historis
         if not self.historical_data:
             return 9000  # Default jika tidak ada data historis
         prices = [data['price'] for data in self.historical_data]
