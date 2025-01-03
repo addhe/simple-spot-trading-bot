@@ -31,17 +31,19 @@ def notifikasi_balance(client):
         usdt_balance = 0
         symbol_balance = 0
 
-        # Menghitung saldo USDT dan simbol yang ditentukan
+        # Menghitung saldo USDT dan simbol dasar yang ditentukan
+        base_symbol = SYMBOL[:-4]  # Mengambil simbol dasar (misal ETH dari ETHUSDT)
+
         for balance in account_info['balances']:
             asset = balance['asset']
             free = float(balance['free'])
             if asset == 'USDT':
                 usdt_balance = free
-            elif asset == SYMBOL:
+            elif asset == base_symbol:  # Memeriksa saldo untuk simbol dasar
                 symbol_balance = free
 
         # Menyusun pesan notifikasi
-        pesan = f'Balance USDT: {usdt_balance}\n{SYMBOL} Balance: {symbol_balance}'
+        pesan = f'Balance USDT: {usdt_balance}\n{base_symbol} Balance: {symbol_balance}'
 
         kirim_notifikasi_telegram(pesan)
 
