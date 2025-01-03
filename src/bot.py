@@ -14,13 +14,15 @@ import logging
 logging.basicConfig(level=logging.DEBUG, filename='bot.log', 
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 class BotTrading:
     def __init__(self):
-        self.client = Client(settings['API_KEY'], settings['API_SECRET'])
+        self.client = Client(settings['API_KEY'], settings['API_SECRET'], testnet=True)
         self.strategy = PriceActionStrategy(SYMBOL)
         self.latest_activity = self.load_latest_activity()
-        self.settings_hash = self.get_settings_hash()
+        self.config_hash = self.get_config_hash()  # Perbaiki di sini
         self.historical_data = self.load_historical_data()
+
 
     def load_latest_activity(self):
         try:
@@ -64,15 +66,15 @@ class BotTrading:
 
     def check_config_change(self):
         current_hash = self.get_config_hash()
-        if current_hash and current_hash != self.settings_hash:
-            self.settings_hash = current_hash
-            logging.info("Settings telah berubah, reload config...")
+        if current_hash and current_hash != self.config_hash:
+            self.config_hash = current_hash
+            logging.info("Config telah berubah, reload config...")
 
     def run(self):
         try:
             schedule.every(1).minutes.do(self.check_price)
             while True:
-                self.check_settings_change()
+                self.check_config_change()
                 schedule.run_pending()
                 time.sleep(1)
         except Exception as e:
