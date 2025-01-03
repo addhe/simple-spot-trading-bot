@@ -14,18 +14,16 @@ from notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_bala
 logging.basicConfig(level=logging.DEBUG, filename='bot.log',
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-
 class BotTrading:
     def __init__(self):
-        # Inisialisasi klien dengan URL Testnet
         self.client = Client(settings['API_KEY'], settings['API_SECRET'])
-        self.client.API_URL = 'https://testnet.binance.vision/api'  # Setel URL ke Testnet
+        self.client.API_URL = 'https://testnet.binance.vision/api'
         self.strategy = PriceActionStrategy(SYMBOL)
         self.latest_activity = self.load_latest_activity()
         self.config_hash = self.get_config_hash()
         self.historical_data = self.load_historical_data()
 
-    def load_latest_activity(self):
+    def load_latest_activity(self) -> dict:
         try:
             with open('latest_activity.pkl', 'rb') as f:
                 return pickle.load(f)
@@ -40,11 +38,11 @@ class BotTrading:
                 'estimasi_profit': 0
             }
 
-    def save_latest_activity(self):
+    def save_latest_activity(self) -> None:
         with open('latest_activity.pkl', 'wb') as f:
             pickle.dump(self.latest_activity, f)
 
-    def load_historical_data(self):
+    def load_historical_data(self) -> list:
         try:
             with open('historical_data.pkl', 'rb') as f:
                 return pickle.load(f)
@@ -52,11 +50,11 @@ class BotTrading:
             logging.warning("File historical_data.pkl tidak ditemukan, menggunakan default.")
             return []
 
-    def save_historical_data(self):
+    def save_historical_data(self) -> None:
         with open('historical_data.pkl', 'wb') as f:
             pickle.dump(self.historical_data, f)
 
-    def get_config_hash(self):
+    def get_config_hash(self) -> str:
         try:
             with open('config/config.py', 'r') as f:
                 settings_code = f.read()
@@ -65,13 +63,13 @@ class BotTrading:
             logging.error(f"Error saat membaca config/config.py: {e}")
             return None
 
-    def check_config_change(self):
+    def check_config_change(self) -> None:
         current_hash = self.get_config_hash()
         if current_hash and current_hash != self.config_hash:
             self.config_hash = current_hash
             logging.info("Config telah berubah, reload config...")
 
-    def run(self):
+    def run(self) -> None:
         logging.info("Bot trading dimulai...")
         try:
             schedule.every(1).minutes.do(self.check_price)
@@ -84,31 +82,22 @@ class BotTrading:
             time.sleep(1)
             self.run()
 
-    def calculate_dynamic_quantity(self, action):
-        """Menghitung quantity berdasarkan saldo dan persentase yang diinginkan."""
+    def calculate_dynamic_quantity(self, action: str) -> float:
         usdt_balance = 0
         for balance in self.client.get_account()['balances']:
             if balance['asset'] == 'USDT':
                 usdt_balance = float(balance['free'])
                 break
 
-        # Misalkan kita ingin menggunakan 10% dari saldo USDT untuk setiap transaksi
         percentage = 0.10
-        quantity = (usdt_balance * percentage) / self.strategy.check_price(self.client)[1]  # Harga saat ini
-        return round(quantity, 2)  # Pembulatan ke 2 desimal
+        quantity = (usdt_balance * percentage) / self.strategy.check_price(self.client)[1]
+        return round(quantity, 2)
 
-    def check_price(self):
+    def check_price(self) -> None:
         try:
-            # Implementasi strategi Price Action
             action, price = self.strategy.check_price(self.client)
-
-            # Log the type of price
-            logging.debug(f"Action: {action}, Price: {price}, Type of price: {type(price)}")
-
-            # Pastikan price adalah float
             price = float(price)
-
-            quantity = self.calculate_dynamic_quantity(action)  # Hitung quantity dinamis
+            quantity = self.calculate_dynamic_quantity(action)
 
             if action == 'BUY':
                 logging.info(f"Melakukan pembelian {SYMBOL} pada harga {price} sebanyak {quantity}")
@@ -130,11 +119,11 @@ class BotTrading:
                 }
                 self.save_latest_activity()
                 notifikasi_buy(SYMBOL, quantity, price)
-                notifikasi_balance(self.client)  # Memperbarui saldo setelah pembelian
+                notifikasi_balance(self.client)
 
             elif action == 'SELL':
                 estimasi_profit = price - self.latest_activity['price'] if self.latest_activity['price'] else 0
-                if estimasi_profit > 0:  # Hanya jual jika ada profit
+                if estimasi_profit > 0:
                     logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price} sebanyak {quantity}")
                     self.client.create_test_order(
                         symbol=SYMBOL,
@@ -154,18 +143,15 @@ class BotTrading:
                     }
                     self.save_latest_activity()
                     notifikasi_sell(SYMBOL, quantity, price, estimasi_profit)
-
-                    # Memperbarui saldo setelah penjualan
-                    notifikasi_balance(self.client)  # Memanggil notifikasi balance setelah transaksi
+                    notifikasi_balance(self.client)
                 else:
                     logging.info(f"Tidak melakukan penjualan {SYMBOL} karena estimasi profit negatif: {estimasi_profit}")
 
-            # Simpan data historis
             self.historical_data.append({
                 'timestamp': time.time(),
                 'price': price,
-                'buy_price': self.calculate_dynamic_buy_price(),
-                'sell_price': self.calculate_dynamic_sell_price()
+                'buy_price': self.strategy.calculate_dynamic_buy_price(),
+                'sell_price': self.strategy.calculate_dynamic_sell_price()
             })
             self.save_historical_data()
 
@@ -173,22 +159,3 @@ class BotTrading:
             logging.error(f"Error dalam check_price: {e}")
             time.sleep(1)
             self.check_price()
-
-    def calculate_dynamic_buy_price(self):
-        # Implementasi logika untuk menghitung harga beli dinamis
-        if not self.historical_data:
-            return 10000  # Default jika tidak ada data historis
-        prices = [data['price'] for data in self.historical_data]
-        return sum(prices) / len(prices) * 0.95  # 5% di bawah rata-rata
-
-    def calculate_dynamic_sell_price(self):
-        # Implementasi logika untuk menghitung harga jual dinamis
-        if not self.historical_data:
-            return 9000  # Default jika tidak ada data historis
-        prices = [data['price'] for data in self.historical_data]
-        return sum(prices) / len(prices) * 1.05  # 5% di atas rata-rata
-
-
-if __name__ == "__main__":
-    bot = BotTrading()
-    bot.run()
