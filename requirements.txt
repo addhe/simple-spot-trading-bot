@@ -32,3 +32,8 @@ tzlocal==5.2
 ujson==5.10.0
 urllib3==1.26.20
 zope.interface==7.2
+python-dotenv
+pandas
+schedule
+requests
+python-telegram-bot
