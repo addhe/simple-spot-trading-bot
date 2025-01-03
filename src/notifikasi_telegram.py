@@ -50,3 +50,4 @@ def notifikasi_balance(client):
 
     except Exception as e:
         print(f"Error saat mengambil saldo: {e}")
+        kirim_notifikasi_telegram(f"Error saat mengambil saldo: {e}")  # Kirim notifikasi kesalahan
