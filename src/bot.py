@@ -11,7 +11,7 @@ from strategy import PriceActionStrategy
 from notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
 
 # Konfigurasi logging
-logging.basicConfig(level=logging.DEBUG, filename='bot.log', 
+logging.basicConfig(level=logging.DEBUG, filename='bot.log',
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 
@@ -118,27 +118,30 @@ class BotTrading:
                 notifikasi_buy(SYMBOL, quantity, price)
 
             elif action == 'SELL':
-                logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price}")
-                quantity = 0.1  # Sesuaikan dengan jumlah yang valid
-                self.client.create_test_order(
-                    symbol=SYMBOL,
-                    side='SELL',
-                    type='LIMIT',
-                    quantity=quantity,
-                    price=price,
-                    timeInForce='GTC'
-                )
-                estimasi_profit = price - self.latest_activity['price']
-                self.latest_activity = {
-                    'buy': False,
-                    'sell': True,
-                    'symbol': SYMBOL,
-                    'quantity': quantity,
-                    'price': price,
-                    'estimasi_profit': estimasi_profit
-                }
-                self.save_latest_activity()
-                notifikasi_sell(SYMBOL, quantity, price, estimasi_profit)
+                estimasi_profit = price - self.latest_activity['price'] if self.latest_activity['price'] else 0
+                if estimasi_profit > 0:  # Hanya jual jika ada profit
+                    logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price}")
+                    quantity = 0.1  # Sesuaikan dengan jumlah yang valid
+                    self.client.create_test_order(
+                        symbol=SYMBOL,
+                        side='SELL',
+                        type='LIMIT',
+                        quantity=quantity,
+                        price=price,
+                        timeInForce='GTC'
+                    )
+                    self.latest_activity = {
+                        'buy': False,
+                        'sell': True,
+                        'symbol': SYMBOL,
+                        'quantity': quantity,
+                        'price': price,
+                        'estimasi_profit': estimasi_profit
+                    }
+                    self.save_latest_activity()
+                    notifikasi_sell(SYMBOL, quantity, price, estimasi_profit)
+                else:
+                    logging.info(f"Tidak melakukan penjualan {SYMBOL} karena estimasi profit negatif: {estimasi_profit}")
 
             # Simpan data historis
             self.historical_data.append({
