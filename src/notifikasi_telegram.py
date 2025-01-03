@@ -1,3 +1,4 @@
+# src/notifikasi_telegram.py
 import requests
 import os
 
@@ -23,6 +24,29 @@ def notifikasi_sell(symbol, quantity, price, estimasi_profit):
     pesan = f'Sell {symbol} sebanyak {quantity} dengan harga {price}\nEstimasi Profit: {estimasi_profit}'
     kirim_notifikasi_telegram(pesan)
 
-def notifikasi_balance(balance):
-    pesan = f'Balance: {balance}'
-    kirim_notifikasi_telegram(pesan)
+def notifikasi_balance(client):
+    try:
+        account_info = client.get_account()  # Mengambil informasi akun dari API
+        usdt_balance = 0
+        crypto_balances = []
+
+        # Menghitung saldo USDT dan simbol trading lainnya
+        for balance in account_info['balances']:
+            asset = balance['asset']
+            free = float(balance['free'])
+            if asset == 'USDT':
+                usdt_balance = free
+            elif free > 0:
+                crypto_balances.append(f"{asset}: {free}")
+
+        # Menyusun pesan notifikasi
+        pesan = f'Balance USDT: {usdt_balance}\n'
+        if crypto_balances:
+            pesan += 'Saldo Kripto:\n' + '\n'.join(crypto_balances)
+        else:
+            pesan += 'Tidak ada saldo kripto yang tersedia.'
+
+        kirim_notifikasi_telegram(pesan)
+
+    except Exception as e:
+        print(f"Error saat mengambil saldo: {e}")
