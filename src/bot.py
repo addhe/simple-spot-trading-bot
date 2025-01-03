@@ -17,10 +17,12 @@ logging.basicConfig(level=logging.DEBUG, filename='bot.log',
 
 class BotTrading:
     def __init__(self):
-        self.client = Client(settings['API_KEY'], settings['API_SECRET'], testnet=True)
+        # Inisialisasi klien dengan URL Testnet
+        self.client = Client(settings['API_KEY'], settings['API_SECRET'])
+        self.client.API_URL = 'https://testnet.binance.vision/api'  # Setel URL ke Testnet
         self.strategy = PriceActionStrategy(SYMBOL)
         self.latest_activity = self.load_latest_activity()
-        self.config_hash = self.get_config_hash()  # Perbaiki di sini
+        self.config_hash = self.get_config_hash()
         self.historical_data = self.load_historical_data()
 
 
