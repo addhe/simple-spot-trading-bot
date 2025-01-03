@@ -120,7 +120,7 @@ class BotTrading:
 
             if action == 'BUY':
                 logging.info(f"Melakukan pembelian {SYMBOL} pada harga {price} sebanyak {quantity}")
-                self.client.create_test_order(
+                order = self.client.create_test_order(
                     symbol=SYMBOL,
                     side='BUY',
                     type='LIMIT',
@@ -128,6 +128,7 @@ class BotTrading:
                     price=price,
                     timeInForce='GTC'
                 )
+                logging.debug(f"Order Detail: {order}")
                 self.latest_activity = {
                     'buy': True,
                     'sell': False,
@@ -144,7 +145,7 @@ class BotTrading:
                 estimasi_profit = price - self.latest_activity['price'] if self.latest_activity['price'] else 0
                 if estimasi_profit > 0:
                     logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price} sebanyak {quantity}")
-                    self.client.create_test_order(
+                    order = self.client.create_test_order(
                         symbol=SYMBOL,
                         side='SELL',
                         type='LIMIT',
@@ -152,6 +153,7 @@ class BotTrading:
                         price=price,
                         timeInForce='GTC'
                     )
+                    logging.debug(f"Order Detail: {order}")
                     self.latest_activity = {
                         'buy': False,
                         'sell': True,
