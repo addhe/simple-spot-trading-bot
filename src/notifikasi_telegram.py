@@ -42,7 +42,10 @@ def notifikasi_balance(client):
         # Menyusun pesan notifikasi
         pesan = f'Balance USDT: {usdt_balance}\n'
         if crypto_balances:
-            pesan += 'Saldo Kripto:\n' + '\n'.join(crypto_balances)
+            # Batasi jumlah simbol yang ditampilkan
+            limited_balances = crypto_balances[:10]  # Tampilkan hanya 10 simbol teratas
+            pesan += 'Saldo Kripto:\n' + '\n'.join(limited_balances)
+            pesan += f"\n... dan {len(crypto_balances) - 10} simbol lainnya."  # Menyebutkan jumlah simbol lainnya
         else:
             pesan += 'Tidak ada saldo kripto yang tersedia.'
 
