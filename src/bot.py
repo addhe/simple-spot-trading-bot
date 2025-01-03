@@ -101,7 +101,7 @@ class BotTrading:
             time.sleep(1)
             self.run()
 
-    def calculate_dynamic_quantity(self, action: str) -> float:
+    def calculate_dynamic_quantity(self, action: str, price: float) -> float:
         usdt_balance = 0
         for balance in self.client.get_account()['balances']:
             if balance['asset'] == 'USDT':
@@ -109,14 +109,14 @@ class BotTrading:
                 break
 
         percentage = 0.10
-        quantity = (usdt_balance * percentage) / self.strategy.check_price(self.client)[1]
+        quantity = (usdt_balance * percentage) / price
         return round(quantity, 2)
 
     def check_price(self) -> None:
         try:
             action, price = self.strategy.check_price(self.client)
             price = float(price)
-            quantity = self.calculate_dynamic_quantity(action)
+            quantity = self.calculate_dynamic_quantity(action, price)
 
             if action == 'BUY':
                 logging.info(f"Melakukan pembelian {SYMBOL} pada harga {price} sebanyak {quantity}")

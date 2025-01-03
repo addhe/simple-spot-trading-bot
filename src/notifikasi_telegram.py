@@ -3,7 +3,7 @@ import requests
 import os
 from config.config import SYMBOL  # Mengimpor SYMBOL dari konfigurasi
 
-def kirim_notifikasi_telegram(pesan):
+def kirim_notifikasi_telegram(pesan: str) -> None:
     token = os.environ['TELEGRAM_TOKEN']
     chat_id = os.environ['TELEGRAM_GROUP_ID']
     url = f'https://api.telegram.org/bot{token}/sendMessage'
@@ -13,19 +13,19 @@ def kirim_notifikasi_telegram(pesan):
     }
     response = requests.post(url, params=params)
     if response.status_code == 200:
-        print('Notifikasi Telegram berhasil dikirim')
+        logging.info('Notifikasi Telegram berhasil dikirim')
     else:
-        print('Gagal mengirim notifikasi Telegram')
+        logging.error('Gagal mengirim notifikasi Telegram')
 
-def notifikasi_buy(symbol, quantity, price):
+def notifikasi_buy(symbol: str, quantity: float, price: float) -> None:
     pesan = f'Buy {symbol} sebanyak {quantity} dengan harga {price}'
     kirim_notifikasi_telegram(pesan)
 
-def notifikasi_sell(symbol, quantity, price, estimasi_profit):
+def notifikasi_sell(symbol: str, quantity: float, price: float, estimasi_profit: float) -> None:
     pesan = f'Sell {symbol} sebanyak {quantity} dengan harga {price}\nEstimasi Profit: {estimasi_profit}'
     kirim_notifikasi_telegram(pesan)
 
-def notifikasi_balance(client):
+def notifikasi_balance(client) -> None:
     try:
         account_info = client.get_account()  # Mengambil informasi akun dari API
         usdt_balance = 0
@@ -48,5 +48,5 @@ def notifikasi_balance(client):
         kirim_notifikasi_telegram(pesan)
 
     except Exception as e:
-        print(f"Error saat mengambil saldo: {e}")
+        logging.error(f"Error saat mengambil saldo: {e}")
         kirim_notifikasi_telegram(f"Error saat mengambil saldo: {e}")  # Kirim notifikasi kesalahan
