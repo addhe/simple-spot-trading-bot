@@ -143,6 +143,9 @@ class BotTrading:
                 else:
                     logging.info(f"Tidak melakukan penjualan {SYMBOL} karena estimasi profit negatif: {estimasi_profit}")
 
+            # Mengambil informasi akun dan mengirim notifikasi saldo
+            notifikasi_balance(self.client)  # Pastikan ini mengirimkan objek klien
+
             # Simpan data historis
             self.historical_data.append({
                 'timestamp': time.time(),
@@ -151,9 +154,6 @@ class BotTrading:
                 'sell_price': self.calculate_dynamic_sell_price()
             })
             self.save_historical_data()
-
-            account_info = self.client.get_account()
-            notifikasi_balance(account_info['balances'][0]['free'])
 
         except Exception as e:
             logging.error(f"Error dalam check_price: {e}")
