@@ -12,16 +12,20 @@ class PriceActionStrategy:
             # Mendapatkan data harga terkini
             self.data = client.get_symbol_ticker(symbol=self.symbol)
             current_price = float(self.data['price'])  # Pastikan harga adalah float
-
-            logging.debug(f"Harga saat ini untuk {self.symbol}: {current_price}")
-
+    
+            logging.debug(f"Harga saat ini untuk {self.symbol}: {current_price}, Type: {type(current_price)}")
+    
             # Logika strategi Price Action
-            # Misalnya, kita bisa menggunakan harga dinamis dari bot
             buy_price = self.calculate_dynamic_buy_price(client)
             sell_price = self.calculate_dynamic_sell_price(client)
-
-            logging.debug(f"Harga Beli Dinamis: {buy_price}, Harga Jual Dinamis: {sell_price}")
-
+    
+            logging.debug(f"Harga Beli Dinamis: {buy_price}, Type: {type(buy_price)}")
+            logging.debug(f"Harga Jual Dinamis: {sell_price}, Type: {type(sell_price)}")
+    
+            # Pastikan buy_price dan sell_price adalah float
+            buy_price = float(buy_price)
+            sell_price = float(sell_price)
+    
             # Contoh logika untuk aksi trading
             if current_price > buy_price:
                 logging.info(f"Mempertimbangkan untuk membeli {self.symbol} pada harga {current_price}")
@@ -32,9 +36,10 @@ class PriceActionStrategy:
             else:
                 logging.info(f"Tidak ada aksi yang diambil untuk {self.symbol} pada harga {current_price}")
                 return 'HOLD', current_price
-
+    
         except Exception as e:
             logging.error(f"Error saat memeriksa harga untuk {self.symbol}: {e}")
+
 
     def calculate_dynamic_buy_price(self, client):
         # Implementasi logika untuk menghitung harga beli dinamis

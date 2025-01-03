@@ -85,6 +85,12 @@ class BotTrading:
             # Implementasi strategi Price Action
             action, price = self.strategy.check_price(self.client)
     
+            # Log the type of price
+            logging.debug(f"Action: {action}, Price: {price}, Type of price: {type(price)}")
+    
+            # Pastikan price adalah float
+            price = float(price)
+    
             if action == 'BUY':
                 quantity = 0.1
                 self.client.place_order(symbol=SYMBOL, side='BUY', type='LIMIT', quantity=quantity, price=price)
