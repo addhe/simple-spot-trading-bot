@@ -1,6 +1,7 @@
 # src/notifikasi_telegram.py
 import requests
 import os
+import logging
 from config.config import SYMBOL  # Mengimpor SYMBOL dari konfigurasi
 
 def kirim_notifikasi_telegram(pesan: str) -> None:
