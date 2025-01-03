@@ -120,7 +120,7 @@ class BotTrading:
 
             if action == 'BUY':
                 logging.info(f"Melakukan pembelian {SYMBOL} pada harga {price} sebanyak {quantity}")
-                order = self.client.create_test_order(
+                order = self.client.create_order(
                     symbol=SYMBOL,
                     side='BUY',
                     type='LIMIT',
@@ -144,12 +144,12 @@ class BotTrading:
             elif action == 'SELL':
                 estimasi_profit = price - self.latest_activity['price'] if self.latest_activity['price'] else 0
                 if estimasi_profit > 0:
-                    logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price} sebanyak {quantity}")
-                    order = self.client.create_test_order(
+                    logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price} sebanyak {self.latest_activity['quantity']}")
+                    order = self.client.create_order(
                         symbol=SYMBOL,
                         side='SELL',
                         type='LIMIT',
-                        quantity=quantity,
+                        quantity=self.latest_activity['quantity'],
                         price=price,
                         timeInForce='GTC'
                     )
@@ -158,12 +158,12 @@ class BotTrading:
                         'buy': False,
                         'sell': True,
                         'symbol': SYMBOL,
-                        'quantity': quantity,
+                        'quantity': self.latest_activity['quantity'],
                         'price': price,
                         'estimasi_profit': estimasi_profit
                     }
                     self.save_latest_activity()
-                    notifikasi_sell(SYMBOL, quantity, price, estimasi_profit)
+                    notifikasi_sell(SYMBOL, self.latest_activity['quantity'], price, estimasi_profit)
                     notifikasi_balance(self.client)
                 else:
                     logging.info(f"Tidak melakukan penjualan {SYMBOL} karena estimasi profit negatif: {estimasi_profit}")
