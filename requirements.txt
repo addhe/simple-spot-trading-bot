@@ -37,3 +37,4 @@ pandas
 schedule
 requests
 python-telegram-bot
+watchdog
