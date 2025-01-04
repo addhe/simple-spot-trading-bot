@@ -20,14 +20,16 @@ class PriceActionStrategy:
         if historical_data.empty:
             return 10000  # Default jika tidak ada data historis
         prices = historical_data['close'].values
-        return prices.mean() * 0.95  # 5% di bawah rata-rata
+        moving_average = prices[-10:].mean()  # Rata-rata dari 10 harga terakhir
+        return moving_average * 0.95  # 5% di bawah rata-rata
 
     def calculate_dynamic_sell_price(self) -> float:
         historical_data = self.get_historical_data()
         if historical_data.empty:
             return 9000  # Default jika tidak ada data historis
         prices = historical_data['close'].values
-        return prices.mean() * 1.05  # 5% di atas rata-rata
+        moving_average = prices[-10:].mean()  # Rata-rata dari 10 harga terakhir
+        return moving_average * 1.05  # 5% di atas rata-rata
 
     def get_historical_data(self) -> pd.DataFrame:
         try:
@@ -51,3 +53,20 @@ class PriceActionStrategy:
         except Exception as e:
             logging.error(f"Error saat mengambil data historis untuk {self.symbol}: {e}")
             return pd.DataFrame()
+
+    def manage_risk(self, action: str, price: float, quantity: float) -> dict:
+        """Mengatur stop-loss dan take-profit berdasarkan harga dan kuantitas."""
+        if action == 'BUY':
+            stop_loss = price * 0.98  # Stop-loss 2% di bawah harga beli
+            take_profit = price * 1.05  # Take-profit 5% di atas harga beli
+        elif action == 'SELL':
+            stop_loss = price * 1.02  # Stop-loss 2% di atas harga jual
+            take_profit = price * 0.95  # Take-profit 5% di bawah harga jual
+        else:
+            return {}
+
+        return {
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'quantity': quantity
+        }
