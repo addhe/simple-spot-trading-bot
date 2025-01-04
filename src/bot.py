@@ -109,8 +109,14 @@ class BotTrading:
                 usdt_balance = float(balance['free'])
                 break
 
-        percentage = 0.10
+        percentage = 0.10  # Persentase dari saldo yang akan digunakan untuk pembelian
         quantity = (usdt_balance * percentage) / price
+
+        # Validasi kuantitas
+        if quantity < 0.01:  # Misalnya, minimum kuantitas yang valid
+            logging.warning(f"Kuota yang dihitung terlalu kecil: {quantity}. Tidak melakukan pembelian.")
+            return 0.0
+
         return round(quantity, 2)
 
     def check_price(self) -> None:
@@ -119,7 +125,7 @@ class BotTrading:
             price = float(price)
             quantity = self.calculate_dynamic_quantity(action, price)
 
-            if action == 'BUY':
+            if action == 'BUY' and quantity > 0:  # Pastikan kuantitas lebih dari 0
                 logging.info(f"Melakukan pembelian {SYMBOL} pada harga {price} sebanyak {quantity}")
                 order = self.client.create_order(
                     symbol=SYMBOL,
