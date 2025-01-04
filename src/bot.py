@@ -9,7 +9,7 @@ from config.settings import settings
 from config.config import SYMBOL, INTERVAL
 from strategy import PriceActionStrategy
 from notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
-from src.check_price import check_price  # Impor fungsi check_price
+from src.check_price import check_price
 
 # Konfigurasi logging
 logging.basicConfig(level=logging.DEBUG, filename='bot.log',
@@ -37,7 +37,9 @@ class BotTrading:
                 'symbol': '',
                 'quantity': 0,
                 'price': 0,
-                'estimasi_profit': 0
+                'estimasi_profit': 0,
+                'stop_loss': 0,
+                'take_profit': 0
             }
         except Exception as e:
             logging.error(f"Error saat membaca latest_activity.pkl: {e}")
@@ -47,7 +49,9 @@ class BotTrading:
                 'symbol': '',
                 'quantity': 0,
                 'price': 0,
-                'estimasi_profit': 0
+                'estimasi_profit': 0,
+                'stop_loss': 0,
+                'take_profit': 0
             }
 
     def save_latest_activity(self) -> None:
@@ -141,13 +145,18 @@ class BotTrading:
                     timeInForce='GTC'
                 )
                 logging.debug(f"Order Detail: {order}")
+
+                # Mengatur stop-loss dan take-profit
+                risk_management = self.strategy.manage_risk('BUY', price, quantity)
                 self.latest_activity = {
                     'buy': True,
                     'sell': False,
                     'symbol': SYMBOL,
                     'quantity': quantity,
                     'price': price,
-                    'estimasi_profit': 0
+                    'estimasi_profit': 0,
+                    'stop_loss': risk_management['stop_loss'],
+                    'take_profit': risk_management['take_profit']
                 }
                 self.save_latest_activity()
                 notifikasi_buy(SYMBOL, quantity, price)
@@ -172,7 +181,9 @@ class BotTrading:
                         'symbol': SYMBOL,
                         'quantity': self.latest_activity['quantity'],
                         'price': price,
-                        'estimasi_profit': estimasi_profit
+                        'estimasi_profit': estimasi_profit,
+                        'stop_loss': 0,
+                        'take_profit': 0
                     }
                     self.save_latest_activity()
                     notifikasi_sell(SYMBOL, self.latest_activity['quantity'], price, estimasi_profit)
