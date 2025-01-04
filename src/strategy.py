@@ -2,6 +2,7 @@ import pandas as pd
 import logging
 from binance.client import Client
 from config.settings import settings
+from src.check_price import check_price
 
 class PriceActionStrategy:
     def __init__(self, symbol: str):
@@ -10,34 +11,9 @@ class PriceActionStrategy:
         self.client.API_URL = 'https://testnet.binance.vision/api'
         self.data = pd.DataFrame()
 
-    def check_price(self, client: Client) -> tuple:
-        try:
-            self.data = client.get_symbol_ticker(symbol=self.symbol)
-            current_price = float(self.data['price'])
-
-            logging.debug(f"Harga saat ini untuk {self.symbol}: {current_price}, Type: {type(current_price)}")
-
-            buy_price = self.calculate_dynamic_buy_price()
-            sell_price = self.calculate_dynamic_sell_price()
-
-            logging.debug(f"Harga Beli Dinamis: {buy_price}, Type: {type(buy_price)}")
-            logging.debug(f"Harga Jual Dinamis: {sell_price}, Type: {type(sell_price)}")
-
-            buy_price = float(buy_price)
-            sell_price = float(sell_price)
-
-            if current_price > buy_price:
-                logging.info(f"Mempertimbangkan untuk membeli {self.symbol} pada harga {current_price}")
-                return 'BUY', current_price
-            elif current_price < sell_price:
-                logging.info(f"Mempertimbangkan untuk menjual {self.symbol} pada harga {current_price}")
-                return 'SELL', current_price
-            else:
-                logging.info(f"Tidak ada aksi yang diambil untuk {self.symbol} pada harga {current_price}")
-                return 'HOLD', current_price
-
-        except Exception as e:
-            logging.error(f"Error saat memeriksa harga untuk {self.symbol}: {e}")
+    def check_price(self, latest_activity: dict) -> tuple:
+        # Panggil fungsi check_price dari modul terpisah
+        return check_price(self.client, self.symbol, latest_activity)
 
     def calculate_dynamic_buy_price(self) -> float:
         historical_data = self.get_historical_data()

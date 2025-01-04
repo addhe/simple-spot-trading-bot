@@ -9,6 +9,7 @@ from config.settings import settings
 from config.config import SYMBOL, INTERVAL
 from strategy import PriceActionStrategy
 from notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
+from src.check_price import check_price  # Impor fungsi check_price
 
 # Konfigurasi logging
 logging.basicConfig(level=logging.DEBUG, filename='bot.log',
@@ -114,7 +115,7 @@ class BotTrading:
 
     def check_price(self) -> None:
         try:
-            action, price = self.strategy.check_price(self.client)
+            action, price = check_price(self.client, SYMBOL, self.latest_activity)
             price = float(price)
             quantity = self.calculate_dynamic_quantity(action, price)
 

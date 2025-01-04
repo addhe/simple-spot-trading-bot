@@ -1,3 +1,4 @@
+#config/settings.py
 import os
 
 settings = {
