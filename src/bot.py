@@ -23,6 +23,7 @@ class BotTrading:
         self.latest_activity = self.load_latest_activity()
         self.config_hash = self.get_config_hash()
         self.historical_data = self.load_historical_data()
+        self.running = True  # Flag untuk menghentikan bot
 
     def load_latest_activity(self) -> dict:
         try:
@@ -93,7 +94,7 @@ class BotTrading:
         logging.info("Bot trading dimulai...")
         try:
             schedule.every(1).minutes.do(self.check_price)
-            while True:
+            while self.running:  # Periksa flag untuk menghentikan loop
                 self.check_config_change()
                 schedule.run_pending()
                 time.sleep(1)
@@ -102,6 +103,10 @@ class BotTrading:
             time.sleep(1)
             self.run()
 
+    def stop(self) -> None:
+        logging.info("Menghentikan bot trading...")
+        self.running = False  # Set flag untuk menghentikan loop
+
     def calculate_dynamic_quantity(self, action: str, price: float) -> float:
         usdt_balance = 0
         for balance in self.client.get_account()['balances']:
@@ -109,7 +114,7 @@ class BotTrading:
                 usdt_balance = float(balance['free'])
                 break
 
-        percentage = 0.10  # Persentase dari saldo yang akan digunakan untuk pembelian
+        percentage = 0.25
         quantity = (usdt_balance * percentage) / price
 
         # Validasi kuantitas
