@@ -18,9 +18,10 @@ if __name__ == "__main__":
 
         def on_modified(self, event):
             # Memeriksa apakah file yang diubah adalah salah satu dari yang kita pantau
-            if event.src_path.endswith(('bot.py', 'strategy.py', 'config.py')):
+            if event.src_path.endswith('.py'):
                 logging.info(f"File {event.src_path} telah diubah. Memuat ulang bot...")
                 self.bot.stop()  # Hentikan bot yang sedang berjalan
+                self.bot = BotTrading()  # Buat instance baru dari BotTrading
                 self.bot.run()   # Jalankan kembali bot
 
     def main():
@@ -28,8 +29,9 @@ if __name__ == "__main__":
         observer = Observer()
         event_handler = ReloadHandler(bot)
 
-        # Mulai memantau direktori src
-        observer.schedule(event_handler, path='src', recursive=False)
+        # Mulai memantau direktori src dan config
+        observer.schedule(event_handler, path='src', recursive=True)
+        observer.schedule(event_handler, path='config', recursive=True)
         observer.start()
 
         try:

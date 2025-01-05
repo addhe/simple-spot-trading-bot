@@ -1,3 +1,4 @@
+# src/bot.py
 import os
 import schedule
 import time
@@ -123,7 +124,7 @@ class BotTrading:
 
         # Validasi kuantitas
         if quantity < 0.01:  # Misalnya, minimum kuantitas yang valid
-            logging.warning(f"Kuota yang dihitung terlalu kecil: {quantity}. Tidak melakukan pembelian.")
+            logging.warning(f"Kuantitas yang dihitung terlalu kecil: {quantity}. Tidak melakukan pembelian.")
             return 0.0
 
         return round(quantity, 2)
@@ -163,33 +164,36 @@ class BotTrading:
                 notifikasi_balance(self.client)
 
             elif action == 'SELL':
-                estimasi_profit = price - self.latest_activity['price'] if self.latest_activity['price'] else 0
-                if estimasi_profit > 0:
-                    logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price} sebanyak {self.latest_activity['quantity']}")
-                    order = self.client.create_order(
-                        symbol=SYMBOL,
-                        side='SELL',
-                        type='LIMIT',
-                        quantity=self.latest_activity['quantity'],
-                        price=price,
-                        timeInForce='GTC'
-                    )
-                    logging.debug(f"Order Detail: {order}")
-                    self.latest_activity = {
-                        'buy': False,
-                        'sell': True,
-                        'symbol': SYMBOL,
-                        'quantity': self.latest_activity['quantity'],
-                        'price': price,
-                        'estimasi_profit': estimasi_profit,
-                        'stop_loss': 0,
-                        'take_profit': 0
-                    }
-                    self.save_latest_activity()
-                    notifikasi_sell(SYMBOL, self.latest_activity['quantity'], price, estimasi_profit)
-                    notifikasi_balance(self.client)
+                if self.latest_activity['buy']:
+                    estimasi_profit = price - self.latest_activity['price'] if self.latest_activity['price'] else 0
+                    if estimasi_profit > 0:
+                        logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price} sebanyak {self.latest_activity['quantity']}")
+                        order = self.client.create_order(
+                            symbol=SYMBOL,
+                            side='SELL',
+                            type='LIMIT',
+                            quantity=self.latest_activity['quantity'],
+                            price=price,
+                            timeInForce='GTC'
+                        )
+                        logging.debug(f"Order Detail: {order}")
+                        self.latest_activity = {
+                            'buy': False,
+                            'sell': True,
+                            'symbol': SYMBOL,
+                            'quantity': self.latest_activity['quantity'],
+                            'price': price,
+                            'estimasi_profit': estimasi_profit,
+                            'stop_loss': 0,
+                            'take_profit': 0
+                        }
+                        self.save_latest_activity()
+                        notifikasi_sell(SYMBOL, self.latest_activity['quantity'], price, estimasi_profit)
+                        notifikasi_balance(self.client)
+                    else:
+                        logging.info(f"Tidak melakukan penjualan {SYMBOL} karena estimasi profit negatif: {estimasi_profit}")
                 else:
-                    logging.info(f"Tidak melakukan penjualan {SYMBOL} karena estimasi profit negatif: {estimasi_profit}")
+                    logging.info(f"Tidak ada transaksi pembelian sebelumnya untuk {SYMBOL}")
 
             self.historical_data.append({
                 'timestamp': time.time(),
