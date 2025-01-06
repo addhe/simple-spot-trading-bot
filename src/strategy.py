@@ -1,3 +1,4 @@
+# src/strategy.py
 import pandas as pd
 import logging
 from binance.client import Client
@@ -15,21 +16,21 @@ class PriceActionStrategy:
         # Panggil fungsi check_price dari modul terpisah
         return check_price(self.client, self.symbol, latest_activity)
 
-    def calculate_dynamic_buy_price(self) -> float:
+    def calculate_dynamic_buy_price(self, window: int = 10, margin: float = 0.05) -> float:
         historical_data = self.get_historical_data()
         if historical_data.empty:
             return 10000  # Default jika tidak ada data historis
         prices = historical_data['close'].values
-        moving_average = prices[-10:].mean()  # Rata-rata dari 10 harga terakhir
-        return moving_average * 0.95  # 5% di bawah rata-rata
+        moving_average = prices[-window:].mean()  # Rata-rata dari window harga terakhir
+        return moving_average * (1 - margin)  # margin di bawah rata-rata
 
-    def calculate_dynamic_sell_price(self) -> float:
+    def calculate_dynamic_sell_price(self, window: int = 10, margin: float = 0.05) -> float:
         historical_data = self.get_historical_data()
         if historical_data.empty:
             return 9000  # Default jika tidak ada data historis
         prices = historical_data['close'].values
-        moving_average = prices[-10:].mean()  # Rata-rata dari 10 harga terakhir
-        return moving_average * 1.05  # 5% di atas rata-rata
+        moving_average = prices[-window:].mean()  # Rata-rata dari window harga terakhir
+        return moving_average * (1 + margin)  # margin di atas rata-rata
 
     def get_historical_data(self) -> pd.DataFrame:
         try:
@@ -47,22 +48,30 @@ class PriceActionStrategy:
                     'taker_buy_quote_asset_volume', 'ignore'
                 ]
             )
-            historical_data['timestamp'] = pd.to_datetime(historical_data['timestamp'], unit='ms')
+            historical_data['timestamp'] = pd.to_datetime(historical_data['timestamp'], unit='ms', utc=True)
             historical_data['close'] = historical_data['close'].astype(float)
             return historical_data
         except Exception as e:
             logging.error(f"Error saat mengambil data historis untuk {self.symbol}: {e}")
             return pd.DataFrame()
 
-    def manage_risk(self, action: str, price: float, quantity: float) -> dict:
+    def manage_risk(self, action: str, price: float, quantity: float, stop_loss_margin: float = 0.02, take_profit_margin: float = 0.05) -> dict:
         """Mengatur stop-loss dan take-profit berdasarkan harga dan kuantitas."""
         if action == 'BUY':
-            stop_loss = price * 0.98  # Stop-loss 2% di bawah harga beli
-            take_profit = price * 1.05  # Take-profit 5% di atas harga beli
+            stop_loss = price * (1 - stop_loss_margin)  # Stop-loss berdasarkan margin
+            take_profit = price * (1 + take_profit_margin)  # Take-profit berdasarkan margin
         elif action == 'SELL':
-            stop_loss = price * 1.02  # Stop-loss 2% di atas harga jual
-            take_profit = price * 0.95  # Take-profit 5% di bawah harga jual
+            stop_loss = price * (1 + stop_loss_margin)  # Stop-loss berdasarkan margin
+            take_profit = price * (1 - take_profit_margin)  # Take-profit berdasarkan margin
         else:
+            return {}
+
+        # Validasi stop-loss dan take-profit
+        if action == 'BUY' and stop_loss >= take_profit:
+            logging.error("Stop-loss tidak boleh lebih besar atau sama dengan take-profit untuk BUY.")
+            return {}
+        if action == 'SELL' and stop_loss <= take_profit:
+            logging.error("Stop-loss tidak boleh lebih kecil atau sama dengan take-profit untuk SELL.")
             return {}
 
         return {
