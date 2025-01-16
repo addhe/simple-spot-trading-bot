@@ -1,3 +1,3 @@
 # config/config.py
-SYMBOL = 'ETHUSDT'
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']  
 INTERVAL = '1m'

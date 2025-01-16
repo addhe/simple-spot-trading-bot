@@ -1,3 +1,4 @@
+#src/bot.py
 import os
 import schedule
 import time
@@ -6,7 +7,7 @@ import hashlib
 import logging
 from binance.client import Client
 from config.settings import settings
-from config.config import SYMBOL, INTERVAL
+from config.config import SYMBOLS, INTERVAL
 from strategy import PriceActionStrategy
 from notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
 from src.check_price import check_price
@@ -19,22 +20,22 @@ class BotTrading:
     def __init__(self):
         self.client = Client(settings['API_KEY'], settings['API_SECRET'])
         self.client.API_URL = 'https://testnet.binance.vision/api'
-        self.strategy = PriceActionStrategy(SYMBOL)
-        self.latest_activity = self.load_latest_activity()
+        self.strategies = {symbol: PriceActionStrategy(symbol) for symbol in SYMBOLS}
+        self.latest_activities = {symbol: self.load_latest_activity(symbol) for symbol in SYMBOLS}
         self.config_hash = self.get_config_hash()
-        self.historical_data = self.load_historical_data()
+        self.historical_data = {symbol: self.load_historical_data(symbol) for symbol in SYMBOLS}
         self.running = True  # Flag untuk menghentikan bot
 
-    def load_latest_activity(self) -> dict:
+    def load_latest_activity(self, symbol: str) -> dict:
         try:
-            with open('latest_activity.pkl', 'rb') as f:
+            with open(f'latest_activity_{symbol}.pkl', 'rb') as f:
                 return pickle.load(f)
         except FileNotFoundError:
-            logging.warning("File latest_activity.pkl tidak ditemukan, menggunakan default.")
+            logging.warning(f"File latest_activity_{symbol}.pkl tidak ditemukan, menggunakan default.")
             return {
                 'buy': False,
                 'sell': False,
-                'symbol': '',
+                'symbol': symbol,
                 'quantity': 0,
                 'price': 0,
                 'estimasi_profit': 0,
@@ -42,11 +43,11 @@ class BotTrading:
                 'take_profit': 0
             }
         except Exception as e:
-            logging.error(f"Error saat membaca latest_activity.pkl: {e}")
+            logging.error(f"Error saat membaca latest_activity_{symbol}.pkl: {e}")
             return {
                 'buy': False,
                 'sell': False,
-                'symbol': '',
+                'symbol': symbol,
                 'quantity': 0,
                 'price': 0,
                 'estimasi_profit': 0,
@@ -54,30 +55,30 @@ class BotTrading:
                 'take_profit': 0
             }
 
-    def save_latest_activity(self) -> None:
+    def save_latest_activity(self, symbol: str) -> None:
         try:
-            with open('latest_activity.pkl', 'wb') as f:
-                pickle.dump(self.latest_activity, f)
+            with open(f'latest_activity_{symbol}.pkl', 'wb') as f:
+                pickle.dump(self.latest_activities[symbol], f)
         except Exception as e:
-            logging.error(f"Error saat menyimpan latest_activity.pkl: {e}")
+            logging.error(f"Error saat menyimpan latest_activity_{symbol}.pkl: {e}")
 
-    def load_historical_data(self) -> list:
+    def load_historical_data(self, symbol: str) -> list:
         try:
-            with open('historical_data.pkl', 'rb') as f:
+            with open(f'historical_data_{symbol}.pkl', 'rb') as f:
                 return pickle.load(f)
         except FileNotFoundError:
-            logging.warning("File historical_data.pkl tidak ditemukan, menggunakan default.")
+            logging.warning(f"File historical_data_{symbol}.pkl tidak ditemukan, menggunakan default.")
             return []
         except Exception as e:
-            logging.error(f"Error saat membaca historical_data.pkl: {e}")
+            logging.error(f"Error saat membaca historical_data_{symbol}.pkl: {e}")
             return []
 
-    def save_historical_data(self) -> None:
+    def save_historical_data(self, symbol: str) -> None:
         try:
-            with open('historical_data.pkl', 'wb') as f:
-                pickle.dump(self.historical_data, f)
+            with open(f'historical_data_{symbol}.pkl', 'wb') as f:
+                pickle.dump(self.historical_data[symbol], f)
         except Exception as e:
-            logging.error(f"Error saat menyimpan historical_data.pkl: {e}")
+            logging.error(f"Error saat menyimpan historical_data_{symbol}.pkl: {e}")
 
     def get_config_hash(self) -> str:
         try:
@@ -97,7 +98,8 @@ class BotTrading:
     def run(self) -> None:
         logging.info("Bot trading dimulai...")
         try:
-            schedule.every(1).minutes.do(self.check_price)
+            for symbol in SYMBOLS:
+                schedule.every(1).minutes.do(self.check_price, symbol=symbol)
             while self.running:  # Periksa flag untuk menghentikan loop
                 self.check_config_change()
                 schedule.run_pending()
@@ -111,7 +113,7 @@ class BotTrading:
         logging.info("Menghentikan bot trading...")
         self.running = False  # Set flag untuk menghentikan loop
 
-    def calculate_dynamic_quantity(self, action: str, price: float) -> float:
+    def calculate_dynamic_quantity(self, symbol: str, price: float) -> float:
         usdt_balance = 0
         for balance in self.client.get_account()['balances']:
             if balance['asset'] == 'USDT':
@@ -128,16 +130,16 @@ class BotTrading:
 
         return round(quantity, 2)
 
-    def check_price(self) -> None:
+    def check_price(self, symbol: str) -> None:
         try:
-            action, price = check_price(self.client, SYMBOL, self.latest_activity)
+            action, price = check_price(self.client, symbol, self.latest_activities[symbol])
             price = float(price)
-            quantity = self.calculate_dynamic_quantity(action, price)
+            quantity = self.calculate_dynamic_quantity(symbol, price)
 
             if action == 'BUY' and quantity > 0:  # Pastikan kuantitas lebih dari 0
-                logging.info(f"Melakukan pembelian {SYMBOL} pada harga {price} sebanyak {quantity}")
+                logging.info(f"Melakukan pembelian {symbol} pada harga {price} sebanyak {quantity}")
                 order = self.client.create_order(
-                    symbol=SYMBOL,
+                    symbol=symbol,
                     side='BUY',
                     type='LIMIT',
                     quantity=quantity,
@@ -147,59 +149,59 @@ class BotTrading:
                 logging.debug(f"Order Detail: {order}")
 
                 # Mengatur stop-loss dan take-profit
-                risk_management = self.strategy.manage_risk('BUY', price, quantity)
-                self.latest_activity = {
+                risk_management = self.strategies[symbol].manage_risk('BUY', price, quantity)
+                self.latest_activities[symbol] = {
                     'buy': True,
                     'sell': False,
-                    'symbol': SYMBOL,
+                    'symbol': symbol,
                     'quantity': quantity,
                     'price': price,
                     'estimasi_profit': 0,
                     'stop_loss': risk_management['stop_loss'],
                     'take_profit': risk_management['take_profit']
                 }
-                self.save_latest_activity()
-                notifikasi_buy(SYMBOL, quantity, price)
+                self.save_latest_activity(symbol)
+                notifikasi_buy(symbol, quantity, price)
                 notifikasi_balance(self.client)
 
             elif action == 'SELL':
-                estimasi_profit = price - self.latest_activity['price'] if self.latest_activity['price'] else 0
+                estimasi_profit = price - self.latest_activities[symbol]['price'] if self.latest_activities[symbol]['price'] else 0
                 if estimasi_profit > 0:
-                    logging.info(f"Melakukan penjualan {SYMBOL} pada harga {price} sebanyak {self.latest_activity['quantity']}")
+                    logging.info(f"Melakukan penjualan {symbol} pada harga {price} sebanyak {self.latest_activities[symbol]['quantity']}")
                     order = self.client.create_order(
-                        symbol=SYMBOL,
+                        symbol=symbol,
                         side='SELL',
                         type='LIMIT',
-                        quantity=self.latest_activity['quantity'],
+                        quantity=self.latest_activities[symbol]['quantity'],
                         price=price,
                         timeInForce='GTC'
                     )
                     logging.debug(f"Order Detail: {order}")
-                    self.latest_activity = {
+                    self.latest_activities[symbol] = {
                         'buy': False,
                         'sell': True,
-                        'symbol': SYMBOL,
-                        'quantity': self.latest_activity['quantity'],
+                        'symbol': symbol,
+                        'quantity': self.latest_activities[symbol]['quantity'],
                         'price': price,
                         'estimasi_profit': estimasi_profit,
                         'stop_loss': 0,
                         'take_profit': 0
                     }
-                    self.save_latest_activity()
-                    notifikasi_sell(SYMBOL, self.latest_activity['quantity'], price, estimasi_profit)
+                    self.save_latest_activity(symbol)
+                    notifikasi_sell(symbol, self.latest_activities[symbol]['quantity'], price, estimasi_profit)
                     notifikasi_balance(self.client)
                 else:
-                    logging.info(f"Tidak melakukan penjualan {SYMBOL} karena estimasi profit negatif: {estimasi_profit}")
+                    logging.info(f"Tidak melakukan penjualan {symbol} karena estimasi profit negatif: {estimasi_profit}")
 
-            self.historical_data.append({
+            self.historical_data[symbol].append({
                 'timestamp': time.time(),
                 'price': price,
-                'buy_price': self.strategy.calculate_dynamic_buy_price(),
-                'sell_price': self.strategy.calculate_dynamic_sell_price()
+                'buy_price': self.strategies[symbol].calculate_dynamic_buy_price(),
+                'sell_price': self.strategies[symbol].calculate_dynamic_sell_price()
             })
-            self.save_historical_data()
+            self.save_historical_data(symbol)
 
         except Exception as e:
-            logging.error(f"Error dalam check_price: {e}")
+            logging.error(f"Error dalam check_price untuk {symbol}: {e}")
             time.sleep(1)
-            self.check_price()
+            self.check_price(symbol)

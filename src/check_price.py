@@ -1,3 +1,4 @@
+#src/check_price.py
 import logging
 from binance.client import Client
 import pandas as pd

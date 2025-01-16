@@ -1,37 +1,59 @@
-# Simple Spot Trading Bot
-
-Simple Spot Trading Bot adalah bot trading yang dirancang untuk melakukan perdagangan di pasar spot menggunakan Binance API. Bot ini memanfaatkan strategi berbasis analisis harga untuk menentukan waktu yang optimal untuk membeli dan menjual aset.
+# Simple Spot Trading Bot  
+  
+Simple Spot Trading Bot adalah bot trading yang dirancang untuk melakukan perdagangan di pasar spot menggunakan Binance API. Bot ini memanfaatkan strategi berbasis analisis harga untuk menentukan waktu yang optimal untuk membeli dan menjual aset.  
+  
+---  
+  
+## Fitur  
+  
+- **Trading Otomatis**: Melakukan pembelian dan penjualan secara otomatis berdasarkan strategi yang telah ditentukan.  
+- **Pengaturan Dinamis**: Menghitung harga beli dan jual secara dinamis berdasarkan data historis.  
+- **Notifikasi Telegram**: Mengirim notifikasi melalui Telegram saat transaksi dilakukan.  
+- **Log Rotasi**: Mengelola file log dengan rotasi otomatis untuk menjaga ukuran file log tetap terkendali.  
+- **Manajemen Risiko**: Mengatur stop loss dan take profit untuk mengendalikan risiko perdagangan.  
+- **Multi-Pasangan Mata Uang**: Mendukung beberapa pasangan mata uang seperti BTC/USDT, ETH/USDT, dan SOL/USDT.  
 
 ---
 
-## Fitur
+## Ringkasan
+### bot.py
+Mengatur dan mengendalikan seluruh operasi bot trading, termasuk:
+- Menyimpan dan memuat data terkini dan historis.
+- Menjalankan transaksi beli dan jual.
+- Mengatur stop loss dan take profit.
+- Logging dan notifikasi.
 
-- **Trading Otomatis**: Melakukan pembelian dan penjualan secara otomatis berdasarkan strategi yang telah ditentukan.
-- **Pengaturan Dinamis**: Menghitung harga beli dan jual secara dinamis berdasarkan data historis.
-- **Notifikasi Telegram**: Mengirim notifikasi melalui Telegram saat transaksi dilakukan.
-- **Log Rotasi**: Mengelola file log dengan rotasi otomatis untuk menjaga ukuran file log tetap terkendali.
+### strategy.py
+Mengatur logika dan strategi trading, termasuk:
+- Mengambil dan mengolah data historis harga.
+- Menghitung harga beli dan jual dinamis.
+- Mengatur manajemen risiko.
+- Logging.
+
+Kedua file bot.py dan strategy.py adalah bagian penting dari bot trading ini, yang bekerja sama untuk mengimplementasikan strategi trading yang efektif.
 
 ---
 
 ## Struktur Proyek
 
 ```
-simple-spot-trading-bot/
-│
-├── src/
-│   ├── bot.py                 # Kode utama untuk bot trading
-│   ├── check_price.py         # Fungsi untuk memeriksa harga dan strategi trading
-│   ├── strategy.py            # Implementasi strategi trading
-│   └── notifikasi_telegram.py # Modul untuk mengirim notifikasi melalui Telegram
-│
-├── config/
-│   ├── config.py              # Konfigurasi untuk bot
-│   └── settings.py            # Pengaturan API dan parameter lainnya
-│
-├── historical_data.pkl        # Data historis untuk analisis
-├── latest_activity.pkl        # Menyimpan aktivitas terbaru bot
-├── bot.log                    # File log untuk mencatat aktivitas bot
-└── main.py                    # Entry point untuk menjalankan bot
+simple-spot-trading-bot/  
+│  
+├── src/  
+│   ├── bot.py                 # Kode utama untuk bot trading  
+│   ├── check_price.py         # Fungsi untuk memeriksa harga dan strategi trading  
+│   ├── strategy.py            # Implementasi strategi trading  
+│   └── notifikasi_telegram.py # Modul untuk mengirim notifikasi melalui Telegram  
+│  
+├── config/  
+│   ├── config.py              # Konfigurasi untuk bot  
+│   └── settings.py            # Pengaturan API dan parameter lainnya  
+│  
+├── historical_data.pkl        # Data historis untuk analisis  
+├── latest_activity.pkl        # Menyimpan aktivitas terbaru bot  
+├── bot.log                    # File log untuk mencatat aktivitas bot  
+└── main.py                    # Entry point untuk menjalankan bot  
+
 ```
 
 ---
