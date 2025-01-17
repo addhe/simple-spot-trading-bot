@@ -21,7 +21,8 @@ if __name__ == "__main__":
             if event.src_path.endswith(('bot.py', 'strategy.py', 'config.py')):
                 logging.info(f"File {event.src_path} telah diubah. Memuat ulang bot...")
                 self.bot.stop()  # Hentikan bot yang sedang berjalan
-                self.bot.run()   # Jalankan kembali bot
+                self.bot = BotTrading()  # Buat instance baru dari BotTrading
+                self.bot.run()  # Jalankan kembali bot
 
     def main():
         bot = BotTrading()

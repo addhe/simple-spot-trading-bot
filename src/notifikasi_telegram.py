@@ -2,7 +2,7 @@
 import requests
 import os
 import logging
-from config.config import SYMBOL  # Mengimpor SYMBOL dari konfigurasi
+from config.config import SYMBOLS  # Mengimpor SYMBOLS dari konfigurasi
 
 def kirim_notifikasi_telegram(pesan: str) -> None:
     token = os.environ['TELEGRAM_TOKEN']
@@ -30,21 +30,21 @@ def notifikasi_balance(client) -> None:
     try:
         account_info = client.get_account()  # Mengambil informasi akun dari API
         usdt_balance = 0
-        symbol_balance = 0
+        symbol_balances = {}
 
         # Menghitung saldo USDT dan simbol dasar yang ditentukan
-        base_symbol = SYMBOL[:-4]  # Mengambil simbol dasar (misal ETH dari ETHUSDT)
-
         for balance in account_info['balances']:
             asset = balance['asset']
             free = float(balance['free'])
             if asset == 'USDT':
                 usdt_balance = free
-            elif asset == base_symbol:  # Memeriksa saldo untuk simbol dasar
-                symbol_balance = free
+            elif asset in [symbol[:-4] for symbol in SYMBOLS]:  # Memeriksa saldo untuk simbol dasar
+                symbol_balances[asset] = free
 
         # Menyusun pesan notifikasi
-        pesan = f'Balance USDT: {usdt_balance}\n{base_symbol} Balance: {symbol_balance}'
+        pesan = f'Balance USDT: {usdt_balance}\n'
+        for symbol, balance in symbol_balances.items():
+            pesan += f'{symbol} Balance: {balance}\n'
 
         kirim_notifikasi_telegram(pesan)
 

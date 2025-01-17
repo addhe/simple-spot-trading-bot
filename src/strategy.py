@@ -1,4 +1,4 @@
-#src/strategy.py
+# src/strategy.py
 import pandas as pd
 import logging
 from binance.client import Client
@@ -71,3 +71,12 @@ class PriceActionStrategy:
             'take_profit': take_profit,
             'quantity': quantity
         }
+
+    def should_sell(self, current_price: float, latest_activity: dict) -> bool:
+        """Menentukan apakah harus menjual berdasarkan kondisi stop-loss atau take-profit."""
+        if latest_activity['buy']:
+            stop_loss = latest_activity['stop_loss']
+            take_profit = latest_activity['take_profit']
+            if current_price <= stop_loss or current_price >= take_profit:
+                return True
+        return False
