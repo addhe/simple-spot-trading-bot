@@ -13,7 +13,6 @@ class PriceActionStrategy:
         self.data = pd.DataFrame()
 
     def check_price(self, latest_activity: dict) -> tuple:
-        # Panggil fungsi check_price dari modul terpisah
         return check_price(self.client, self.symbol, latest_activity)
 
     def calculate_dynamic_buy_price(self) -> float:
@@ -56,16 +55,16 @@ class PriceActionStrategy:
             return pd.DataFrame()
 
     def manage_risk(self, action: str, price: float, quantity: float) -> dict:
-        """Mengatur stop-loss dan take-profit berdasarkan harga dan kuantitas."""
+        """Mengatur stop-loss dan take-profit berdasarkan ATR."""
+        atr = self.calculate_atr()
         if action == 'BUY':
-            stop_loss = price * 0.98  # Stop-loss 2% di bawah harga beli
-            take_profit = price * 1.05  # Take-profit 5% di atas harga beli
+            stop_loss = price - (2 * atr)
+            take_profit = price + (3 * atr)
         elif action == 'SELL':
-            stop_loss = price * 1.02  # Stop-loss 2% di atas harga jual
-            take_profit = price * 0.95  # Take-profit 5% di bawah harga jual
+            stop_loss = price + (2 * atr)
+            take_profit = price - (3 * atr)
         else:
             return {}
-
         return {
             'stop_loss': stop_loss,
             'take_profit': take_profit,
@@ -80,3 +79,28 @@ class PriceActionStrategy:
             if current_price <= stop_loss or current_price >= take_profit:
                 return True
         return False
+
+    def calculate_atr(self) -> float:
+        """Menghitung Average True Range (ATR) untuk volatilitas."""
+        historical_data = self.get_historical_data()
+        if historical_data.empty:
+            return 0
+        high_low = historical_data['high'] - historical_data['low']
+        high_close = abs(historical_data['high'] - historical_data['close'].shift())
+        low_close = abs(historical_data['low'] - historical_data['close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = ranges.max(axis=1)
+        atr = true_range.rolling(window=14).mean().iloc[-1]
+        return atr
+
+    def calculate_moving_average(self, period: int) -> float:
+        """Menghitung moving average untuk periode tertentu."""
+        historical_data = self.get_historical_data()
+        if historical_data.empty or len(historical_data) < period:
+            return 0
+        return historical_data['close'].tail(period).mean()
+
+    def should_buy(self, current_price: float) -> bool:
+        """Menentukan apakah harus membeli berdasarkan moving average."""
+        moving_average = self.calculate_moving_average(10)  # Rata-rata bergerak 10 periode
+        return current_price > moving_average  # Beli jika harga saat ini di atas moving average
