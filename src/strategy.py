@@ -3,7 +3,7 @@ import pandas as pd
 import logging
 from binance.client import Client
 from config.settings import settings
-from src.check_price import check_price
+from src.check_price import CryptoPriceChecker  # Mengimpor kelas CryptoPriceChecker
 
 class PriceActionStrategy:
     def __init__(self, symbol: str):
@@ -11,15 +11,18 @@ class PriceActionStrategy:
         self.client = Client(settings['API_KEY'], settings['API_SECRET'])
         self.client.API_URL = 'https://testnet.binance.vision/api'
         self.data = pd.DataFrame()
+        self.price_checker = CryptoPriceChecker(self.client)  # Membuat instance dari CryptoPriceChecker
 
     def check_price(self, latest_activity: dict) -> tuple:
+        """Memeriksa harga saat ini dan menentukan aksi trading."""
         try:
-            return check_price(self.client, self.symbol, latest_activity)
+            return self.price_checker.check_price(self.symbol, latest_activity)  # Menggunakan instance price_checker
         except Exception as e:
             logging.error(f"Error saat memeriksa harga untuk {self.symbol}: {e}")
             return 'HOLD', 0  # Kembalikan 'HOLD' jika terjadi kesalahan
 
     def calculate_dynamic_buy_price(self) -> float:
+        """Menghitung harga beli dinamis berdasarkan data historis."""
         try:
             historical_data = self.get_historical_data()
             if historical_data.empty:
@@ -32,6 +35,7 @@ class PriceActionStrategy:
             return 10000  # Kembalikan default jika terjadi kesalahan
 
     def calculate_dynamic_sell_price(self) -> float:
+        """Menghitung harga jual dinamis berdasarkan data historis."""
         try:
             historical_data = self.get_historical_data()
             if historical_data.empty:
@@ -44,6 +48,7 @@ class PriceActionStrategy:
             return 9000  # Kembalikan default jika terjadi kesalahan
 
     def get_historical_data(self) -> pd.DataFrame:
+        """Mengambil data historis untuk simbol yang ditentukan."""
         try:
             klines = self.client.get_historical_klines(
                 self.symbol,
