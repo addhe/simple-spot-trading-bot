@@ -9,9 +9,9 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config.settings import settings
 from config.config import SYMBOLS, INTERVAL
-from strategy import PriceActionStrategy
-from notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
-from src.check_price import check_price
+from src.strategy import PriceActionStrategy
+from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
+from src.check_price import CryptoPriceChecker  # Mengimpor kelas CryptoPriceChecker
 
 # Konfigurasi logging
 logging.basicConfig(level=logging.DEBUG, filename='bot.log',
@@ -28,6 +28,7 @@ class BotTrading:
         self.running = True
         self.symbol_info = {}
         self.init_symbol_info()
+        self.price_checker = CryptoPriceChecker(self.client)  # Menggunakan CryptoPriceChecker
 
     def init_symbol_info(self):
         """Initialize symbol information including precision and minimum notional requirements."""
@@ -181,7 +182,7 @@ class BotTrading:
             try:
                 strategy = self.strategies[symbol]
                 latest_activity = self.latest_activities[symbol]
-                action, price = check_price(self.client, symbol, latest_activity)
+                action, price = self.price_checker.check_price(symbol, latest_activity)  # Menggunakan price_checker
                 price = float(price)  # Ensure price is float
 
                 # Only proceed with BUY if we have sufficient USDT balance
