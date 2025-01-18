@@ -1,4 +1,3 @@
-# main.py
 import sys
 import os
 import time
@@ -6,6 +5,8 @@ import logging
 from dotenv import load_dotenv
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 if __name__ == "__main__":
     load_dotenv()
@@ -15,27 +16,38 @@ if __name__ == "__main__":
     class ReloadHandler(FileSystemEventHandler):
         def __init__(self, bot):
             self.bot = bot
+            self.lock = False  # To prevent multiple reloads in quick succession
 
         def on_modified(self, event):
-            # Memeriksa apakah file yang diubah adalah salah satu dari yang kita pantau
-            if event.src_path.endswith(('bot.py', 'strategy.py', 'config.py')):
-                logging.info(f"File {event.src_path} telah diubah. Memuat ulang bot...")
-                self.bot.stop()  # Hentikan bot yang sedang berjalan
-                self.bot = BotTrading()  # Buat instance baru dari BotTrading
-                self.bot.run()  # Jalankan kembali bot
+            if self.lock:  # Skip if already reloading
+                return
+            self.lock = True
+
+            try:
+                if event.src_path.endswith(('bot.py', 'strategy.py', 'config.py')):
+                    logging.info(f"File {event.src_path} modified. Reloading bot...")
+                    self.bot.stop()  # Stop the current bot instance
+                    self.bot = BotTrading()  # Create a new bot instance
+                    self.bot.run()  # Run the bot again
+            except Exception as e:
+                logging.error(f"Error during bot reload: {e}")
+            finally:
+                self.lock = False
 
     def main():
         bot = BotTrading()
         observer = Observer()
         event_handler = ReloadHandler(bot)
 
-        # Mulai memantau direktori src
-        observer.schedule(event_handler, path='src', recursive=False)
+        # Absolute path for better reliability
+        src_path = os.path.abspath('src')
+        observer.schedule(event_handler, path=src_path, recursive=False)
         observer.start()
 
         try:
-            bot.run()  # Jalankan bot trading
+            bot.run()  # Start the bot trading logic
         except KeyboardInterrupt:
+            logging.info("Shutting down bot and observer.")
             observer.stop()
         observer.join()
 
