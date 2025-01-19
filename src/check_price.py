@@ -1,12 +1,10 @@
 # src/check_price.py
-import logging
 import os
-import pandas as pd
 import time
+import pandas as pd
+import logging
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
-import random
-import datetime
 
 # Konfigurasi logging
 logging.basicConfig(
@@ -29,9 +27,11 @@ class CryptoPriceChecker:
         self.cached_data = {}
 
     def _get_offline_data_path(self, symbol: str) -> str:
+        """Menentukan path file CSV untuk data historis offline."""
         return os.path.join(self.DATA_DIR, f"{symbol}_historical.csv")
 
     def _load_offline_data(self, symbol: str) -> pd.DataFrame:
+        """Memuat data historis dari file offline."""
         path = self._get_offline_data_path(symbol)
         if os.path.exists(path):
             logging.info(f"Memuat data historis offline untuk {symbol} dari {path}...")
@@ -41,11 +41,13 @@ class CryptoPriceChecker:
             return pd.DataFrame()
 
     def _save_offline_data(self, symbol: str, data: pd.DataFrame):
+        """Menyimpan data historis ke file CSV."""
         path = self._get_offline_data_path(symbol)
         logging.info(f"Menyimpan data historis offline untuk {symbol} ke {path}...")
         data.to_csv(path, index=False)
 
     def _retry_api_call(self, func, *args, **kwargs):
+        """Mengelola percakapan API dengan retry dan backoff eksponensial."""
         retries = 0
         while retries < self.MAX_RETRIES:
             try:
@@ -60,11 +62,13 @@ class CryptoPriceChecker:
         return None
 
     def get_historical_data(self, symbol: str, interval: str = '1m', start_time: str = '1 day ago UTC') -> pd.DataFrame:
+        """Mengambil data historis untuk simbol tertentu dengan menggunakan cache atau API."""
         # Cek apakah data historis sudah tersedia dalam cache
         if symbol in self.cached_data and time.time() - self.cached_data[symbol]['timestamp'] < self.CACHE_LIFETIME:
             logging.info(f"Data historis untuk {symbol} diambil dari cache.")
             return self.cached_data[symbol]['data']
 
+        # Jika data offline tersedia, coba gunakan data tersebut
         offline_data = self._load_offline_data(symbol)
         try:
             logging.info(f"Mengambil data historis untuk {symbol} dari API...")
@@ -109,6 +113,7 @@ class CryptoPriceChecker:
             return offline_data if not offline_data.empty else pd.DataFrame()
 
     def calculate_dynamic_price(self, symbol: str, multiplier: float) -> float:
+        """Menghitung harga dinamis berdasarkan data historis yang telah diambil."""
         try:
             logging.info(f"Menghitung harga dinamis untuk {symbol}...")
             historical_data = self.get_historical_data(symbol)
@@ -125,12 +130,15 @@ class CryptoPriceChecker:
             return 0.0
 
     def calculate_dynamic_buy_price(self, symbol: str) -> float:
+        """Menghitung harga beli dinamis untuk simbol tertentu."""
         return self.calculate_dynamic_price(symbol, self.BUY_MULTIPLIER)
 
     def calculate_dynamic_sell_price(self, symbol: str) -> float:
+        """Menghitung harga jual dinamis untuk simbol tertentu."""
         return self.calculate_dynamic_price(symbol, self.SELL_MULTIPLIER)
 
     def get_current_price(self, symbol: str) -> float:
+        """Mengambil harga saat ini untuk simbol tertentu."""
         try:
             logging.info(f"Mengambil harga saat ini untuk {symbol}...")
             data = self._retry_api_call(self.client.get_symbol_ticker, symbol=symbol)
@@ -144,6 +152,7 @@ class CryptoPriceChecker:
             raise ValueError(f"Error saat mengambil harga saat ini untuk {symbol}: {e}")
 
     def check_price(self, symbol: str, latest_activity: dict):
+        """Memeriksa harga dan menentukan apakah perlu melakukan aksi BUY, SELL, atau HOLD."""
         try:
             buy_price = self.calculate_dynamic_buy_price(symbol)
             sell_price = self.calculate_dynamic_sell_price(symbol)
