@@ -4,6 +4,7 @@ import logging
 from binance.client import Client
 from config.settings import settings
 from src.check_price import CryptoPriceChecker  # Mengimpor kelas CryptoPriceChecker
+import numpy as np
 
 class PriceActionStrategy:
     def __init__(self, symbol: str):
@@ -53,7 +54,7 @@ class PriceActionStrategy:
             return pd.DataFrame()  # Kembalikan DataFrame kosong jika terjadi kesalahan
 
     def calculate_dynamic_buy_price(self) -> float:
-        """Menghitung harga beli dinamis berdasarkan data historis."""
+        """Menghitung harga beli dinamis berdasarkan data historis dan volatilitas pasar (ATR)."""
         try:
             historical_data = self.get_historical_data()
             if historical_data.empty:
@@ -62,14 +63,22 @@ class PriceActionStrategy:
 
             prices = historical_data['close'].values
             moving_average = prices[-10:].mean()  # Rata-rata dari 10 harga terakhir
-            dynamic_buy_price = moving_average * 0.95  # 5% di bawah rata-rata
+
+            # Menghitung ATR untuk volatilitas
+            atr = self.calculate_atr()
+            if atr == 0:
+                logging.warning(f"ATR untuk {self.symbol} adalah 0, menggunakan multiplier default.")
+                return moving_average * 0.95  # Harga beli dinamis, 5% di bawah rata-rata
+
+            dynamic_buy_price = moving_average * (1 - (0.05 + atr * 0.02))  # 5% dikurangi volatilitas
+
             return dynamic_buy_price
         except Exception as e:
             logging.error(f"Error dalam menghitung harga beli dinamis untuk {self.symbol}: {e}")
             return 10000  # Kembalikan default jika terjadi kesalahan
 
     def calculate_dynamic_sell_price(self) -> float:
-        """Menghitung harga jual dinamis berdasarkan data historis."""
+        """Menghitung harga jual dinamis berdasarkan data historis dan volatilitas pasar (ATR)."""
         try:
             historical_data = self.get_historical_data()
             if historical_data.empty:
@@ -78,7 +87,15 @@ class PriceActionStrategy:
 
             prices = historical_data['close'].values
             moving_average = prices[-10:].mean()  # Rata-rata dari 10 harga terakhir
-            dynamic_sell_price = moving_average * 1.05  # 5% di atas rata-rata
+
+            # Menghitung ATR untuk volatilitas
+            atr = self.calculate_atr()
+            if atr == 0:
+                logging.warning(f"ATR untuk {self.symbol} adalah 0, menggunakan multiplier default.")
+                return moving_average * 1.05  # Harga jual dinamis, 5% di atas rata-rata
+
+            dynamic_sell_price = moving_average * (1 + (0.05 + atr * 0.02))  # 5% ditambah volatilitas
+
             return dynamic_sell_price
         except Exception as e:
             logging.error(f"Error dalam menghitung harga jual dinamis untuk {self.symbol}: {e}")
