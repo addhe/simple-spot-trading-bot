@@ -1,4 +1,3 @@
-# src/check_price.py
 import os
 import time
 import pandas as pd
@@ -9,13 +8,17 @@ from binance.exceptions import BinanceAPIException
 # Konfigurasi logging
 logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s',
-    level=logging.INFO,
-    datefmt='%Y-%m-%d %H:%M:%S'
+    level=logging.DEBUG,  # Mengubah level ke DEBUG untuk log yang lebih detail
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler('check_price.log', mode='w'),
+        logging.StreamHandler()  # Menampilkan log juga ke konsol
+    ]
 )
 
 class CryptoPriceChecker:
-    BUY_MULTIPLIER = 0.95
-    SELL_MULTIPLIER = 1.05
+    BUY_MULTIPLIER = 0.94
+    SELL_MULTIPLIER = 1.065
     DATA_DIR = "historical_data"
     CACHE_LIFETIME = 60  # Cache selama 60 detik untuk pengambilan data baru
     MAX_RETRIES = 5
@@ -43,8 +46,11 @@ class CryptoPriceChecker:
     def _save_offline_data(self, symbol: str, data: pd.DataFrame):
         """Menyimpan data historis ke file CSV."""
         path = self._get_offline_data_path(symbol)
-        logging.info(f"Menyimpan data historis offline untuk {symbol} ke {path}...")
-        data.to_csv(path, index=False)
+        try:
+            logging.info(f"Menyimpan data historis offline untuk {symbol} ke {path}...")
+            data.to_csv(path, index=False)
+        except Exception as e:
+            logging.error(f"Gagal menyimpan data historis untuk {symbol}: {e}")
 
     def _retry_api_call(self, func, *args, **kwargs):
         """Mengelola percakapan API dengan retry dan backoff eksponensial."""
@@ -75,6 +81,7 @@ class CryptoPriceChecker:
             klines = self._retry_api_call(self.client.get_historical_klines, symbol, interval, start_time)
 
             if klines is None:
+                logging.error(f"Gagal mengambil data historis dari API, menggunakan data offline.")
                 return offline_data
 
             new_data = pd.DataFrame(
@@ -138,6 +145,8 @@ class CryptoPriceChecker:
             balance = self.client.get_asset_balance(asset='USDT')  # Ganti dengan aset yang relevan
             if balance:
                 logging.info(f"Saldo USDT saat ini: {balance['free']}")
+            else:
+                logging.warning("Saldo USDT tidak ditemukan.")
         except Exception as e:
             logging.error(f"Error saat mengambil saldo: {e}")
 
@@ -155,6 +164,7 @@ class CryptoPriceChecker:
             logging.info(f"Mengambil harga saat ini untuk {symbol}...")
             data = self._retry_api_call(self.client.get_symbol_ticker, symbol=symbol)
             if data is None:
+                logging.error(f"Gagal mengambil harga saat ini untuk {symbol}.")
                 return 0.0
             current_price = float(data['price'])
             logging.info(f"Harga saat ini untuk {symbol} berhasil diambil: {current_price}")
@@ -184,3 +194,8 @@ class CryptoPriceChecker:
         except Exception as e:
             logging.error(f"Error saat memeriksa harga untuk {symbol}: {e}")
             raise ValueError(f"Error saat memeriksa harga untuk {symbol}: {e}")
+
+# Example usage:
+# client = Client(API_KEY, API_SECRET)
+# price_checker = CryptoPriceChecker(client)
+# price_checker.check_price("BTCUSDT", {'buy': True})
