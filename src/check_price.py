@@ -1,6 +1,8 @@
+# src/check_price.py
 import logging
 import os
 import pandas as pd
+import time
 from binance.client import Client
 
 # Konfigurasi logging
@@ -14,31 +16,17 @@ class CryptoPriceChecker:
     BUY_MULTIPLIER = 0.95
     SELL_MULTIPLIER = 1.05
     DATA_DIR = "historical_data"
+    CACHE_LIFETIME = 60  # Cache selama 60 detik untuk pengambilan data baru
 
     def __init__(self, client: Client):
-        """
-        Inisialisasi class CryptoPriceChecker.
-
-        Args:
-        - client (Client): Klien Binance.
-        """
         self.client = client
         os.makedirs(self.DATA_DIR, exist_ok=True)  # Pastikan direktori data ada
+        self.cached_data = {}
 
     def _get_offline_data_path(self, symbol: str) -> str:
-        """Mengembalikan path file untuk data historis offline."""
         return os.path.join(self.DATA_DIR, f"{symbol}_historical.csv")
 
     def _load_offline_data(self, symbol: str) -> pd.DataFrame:
-        """
-        Memuat data historis dari penyimpanan offline.
-
-        Args:
-        - symbol (str): Simbol aset cryptocurrency.
-
-        Returns:
-        - pd.DataFrame: Data historis dari file, atau DataFrame kosong jika file tidak ada.
-        """
         path = self._get_offline_data_path(symbol)
         if os.path.exists(path):
             logging.info(f"Memuat data historis offline untuk {symbol} dari {path}...")
@@ -48,31 +36,17 @@ class CryptoPriceChecker:
             return pd.DataFrame()
 
     def _save_offline_data(self, symbol: str, data: pd.DataFrame):
-        """
-        Menyimpan data historis ke penyimpanan offline.
-
-        Args:
-        - symbol (str): Simbol aset cryptocurrency.
-        - data (pd.DataFrame): Data historis yang akan disimpan.
-        """
         path = self._get_offline_data_path(symbol)
         logging.info(f"Menyimpan data historis offline untuk {symbol} ke {path}...")
         data.to_csv(path, index=False)
 
     def get_historical_data(self, symbol: str, interval: str = '1m', start_time: str = '1 day ago UTC') -> pd.DataFrame:
-        """
-        Fungsi untuk mendapatkan data historis aset cryptocurrency.
+        # Cek apakah data historis sudah tersedia dalam cache
+        if symbol in self.cached_data and time.time() - self.cached_data[symbol]['timestamp'] < self.CACHE_LIFETIME:
+            logging.info(f"Data historis untuk {symbol} diambil dari cache.")
+            return self.cached_data[symbol]['data']
 
-        Args:
-        - symbol (str): Simbol aset cryptocurrency.
-        - interval (str): Interval waktu data historis. Default: '1m'.
-        - start_time (str): Waktu awal data historis. Default: '1 day ago UTC'.
-
-        Returns:
-        - pd.DataFrame: Data historis aset cryptocurrency.
-        """
         offline_data = self._load_offline_data(symbol)
-
         try:
             logging.info(f"Mengambil data historis untuk {symbol} dari API...")
             klines = self.client.get_historical_klines(symbol, interval, start_time)
@@ -91,29 +65,29 @@ class CryptoPriceChecker:
 
             # Gabungkan data baru dengan data offline jika ada
             if not offline_data.empty:
-                combined_data = pd.concat([offline_data, new_data]).drop_duplicates(subset='timestamp').sort_values(by='timestamp')
+                # Cek apakah ada data baru yang perlu ditambahkan
+                last_timestamp = offline_data['timestamp'].max() if not offline_data.empty else None
+                new_data_timestamp = new_data['timestamp'].max() if not new_data.empty else None
+
+                if last_timestamp is None or new_data_timestamp > last_timestamp:
+                    combined_data = pd.concat([offline_data, new_data]).drop_duplicates(subset='timestamp').sort_values(by='timestamp')
+                    self._save_offline_data(symbol, combined_data)
+                    self.cached_data[symbol] = {'data': combined_data, 'timestamp': time.time()}
+                    logging.info(f"Data historis untuk {symbol} berhasil diperbarui.")
+                    return combined_data
+                else:
+                    logging.info(f"Tidak ada data baru untuk {symbol}. Data historis tetap menggunakan yang lama.")
+                    return offline_data
             else:
-                combined_data = new_data
-
-            self._save_offline_data(symbol, combined_data)
-            logging.info(f"Data historis untuk {symbol} berhasil diperbarui.")
-            return combined_data
-
+                self._save_offline_data(symbol, new_data)
+                self.cached_data[symbol] = {'data': new_data, 'timestamp': time.time()}
+                logging.info(f"Data historis untuk {symbol} berhasil diperbarui.")
+                return new_data
         except Exception as e:
             logging.error(f"Error saat mengambil data historis untuk {symbol}: {e}")
             return offline_data if not offline_data.empty else pd.DataFrame()
 
     def calculate_dynamic_price(self, symbol: str, multiplier: float) -> float:
-        """
-        Fungsi untuk menghitung harga dinamis aset cryptocurrency.
-
-        Args:
-        - symbol (str): Simbol aset cryptocurrency.
-        - multiplier (float): Faktor pengali harga dinamis.
-
-        Returns:
-        - float: Harga dinamis aset cryptocurrency.
-        """
         try:
             logging.info(f"Menghitung harga dinamis untuk {symbol}...")
             historical_data = self.get_historical_data(symbol)
@@ -130,39 +104,12 @@ class CryptoPriceChecker:
             return 0.0
 
     def calculate_dynamic_buy_price(self, symbol: str) -> float:
-        """
-        Fungsi untuk menghitung harga beli dinamis aset cryptocurrency.
-
-        Args:
-        - symbol (str): Simbol aset cryptocurrency.
-
-        Returns:
-        - float: Harga beli dinamis aset cryptocurrency.
-        """
         return self.calculate_dynamic_price(symbol, self.BUY_MULTIPLIER)
 
     def calculate_dynamic_sell_price(self, symbol: str) -> float:
-        """
-        Fungsi untuk menghitung harga jual dinamis aset cryptocurrency.
-
-        Args:
-        - symbol (str): Simbol aset cryptocurrency.
-
-        Returns:
-        - float: Harga jual dinamis aset cryptocurrency.
-        """
         return self.calculate_dynamic_price(symbol, self.SELL_MULTIPLIER)
 
     def get_current_price(self, symbol: str) -> float:
-        """
-        Fungsi untuk mengambil harga saat ini aset cryptocurrency.
-
-        Args:
-        - symbol (str): Simbol aset cryptocurrency.
-
-        Returns:
-        - float: Harga saat ini aset cryptocurrency.
-        """
         try:
             logging.info(f"Mengambil harga saat ini untuk {symbol}...")
             data = self.client.get_symbol_ticker(symbol=symbol)
@@ -174,16 +121,6 @@ class CryptoPriceChecker:
             raise ValueError(f"Error saat mengambil harga saat ini untuk {symbol}: {e}")
 
     def check_price(self, symbol: str, latest_activity: dict):
-        """
-        Memeriksa harga terkini dan menentukan aksi.
-
-        Args:
-        - symbol (str): Simbol aset cryptocurrency.
-        - latest_activity (dict): Aktivitas terakhir (e.g., {"buy": True, "price": 30000.0}).
-
-        Returns:
-        - tuple: (aksi, harga_saat_ini)
-        """
         try:
             buy_price = self.calculate_dynamic_buy_price(symbol)
             sell_price = self.calculate_dynamic_sell_price(symbol)
@@ -201,4 +138,3 @@ class CryptoPriceChecker:
         except Exception as e:
             logging.error(f"Error saat memeriksa harga untuk {symbol}: {e}")
             raise ValueError(f"Error saat memeriksa harga untuk {symbol}: {e}")
-
