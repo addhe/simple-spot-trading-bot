@@ -1,3 +1,4 @@
+# src/bot.py
 import os
 import schedule
 import time
@@ -212,20 +213,23 @@ class BotTrading:
                 latest_activity = self.latest_activities[symbol]
                 action, price = self.price_checker.check_price(symbol, latest_activity)
 
-                if action == 'BUY' and not self.has_active_orders(symbol, 'BUY'):
+                # Cek jika action adalah BUY dan belum ada pembelian sebelumnya
+                if action == 'BUY' and not latest_activity['buy'] and not self.has_active_orders(symbol, 'BUY'):
                     quantity = self.calculate_dynamic_quantity(symbol, price)
                     if quantity > 0:
                         self.execute_buy(symbol, price, quantity, strategy)
 
-                elif action == 'SELL' and not self.has_active_orders(symbol, 'SELL'):
+                # Cek jika action adalah SELL dan sudah ada pembelian sebelumnya
+                elif action == 'SELL' and latest_activity['buy'] and not self.has_active_orders(symbol, 'SELL'):
                     self.execute_sell(symbol, price, latest_activity)
 
+                # Cek jika harus menjual berdasarkan strategi
                 if latest_activity['buy'] and strategy.should_sell(price, latest_activity):
                     self.execute_sell(symbol, price, latest_activity)
             except Exception as e:
                 logging.error(f"Error checking prices for {symbol}: {e}")
 
-    def execute_buy(self, symbol: str, price: float, quantity: float, strategy):
+    def execute_buy(self, symbol: str, price: float, quantity: float, strategy: PriceActionStrategy):
         try:
             rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
             rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
@@ -238,77 +242,48 @@ class BotTrading:
                 price=rounded_price,
                 timeInForce='GTC'
             )
-            logging.debug(f"Order Detail: {order}")
+            logging.debug(f"Executed BUY for {symbol}: {quantity} at {price}")
 
-            risk_management = strategy.manage_risk('BUY', rounded_price, rounded_quantity)
-            self.latest_activities[symbol] = {
-                'buy': True,
-                'sell': False,
-                'symbol': symbol,
-                'quantity': rounded_quantity,
-                'price': rounded_price,
-                'stop_loss': risk_management['stop_loss'],
-                'take_profit': risk_management['take_profit']
-            }
+            # Save activity and notify
+            self.latest_activities[symbol] = {'buy': True, 'sell': False, 'quantity': quantity, 'price': price, 'stop_loss': None, 'take_profit': None}
             self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
-            notifikasi_buy(symbol, rounded_quantity, rounded_price)
-            notifikasi_balance(self.client)
-        except BinanceAPIException as e:
-            logging.error(f"API error during buy {symbol}: {e}")
-        except Exception as e:
-            logging.error(f"Error executing buy {symbol}: {e}")
 
-    def execute_sell(self, symbol: str, price: float, latest_activity):
+            notifikasi_buy(symbol, quantity, price)
+        except BinanceAPIException as e:
+            logging.error(f"Error executing BUY order for {symbol}: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error during BUY for {symbol}: {e}")
+
+    def execute_sell(self, symbol: str, price: float, activity):
         try:
-            estimasi_profit = price - latest_activity['price'] if latest_activity['price'] else 0
-            if estimasi_profit > 0:
-                rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
-                rounded_quantity = round(latest_activity['quantity'], self.symbol_info[symbol]['quantity_precision'])
+            quantity = activity['quantity']
+            rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
+            rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
 
-                order = self.client.create_order(
-                    symbol=symbol,
-                    side='SELL',
-                    type='LIMIT',
-                    quantity=rounded_quantity,
-                    price=rounded_price,
-                    timeInForce='GTC'
-                )
-                logging.debug(f"Order Detail: {order}")
+            order = self.client.create_order(
+                symbol=symbol,
+                side='SELL',
+                type='LIMIT',
+                quantity=rounded_quantity,
+                price=rounded_price,
+                timeInForce='GTC'
+            )
 
-                self.latest_activities[symbol] = {
-                    'buy': False,
-                    'sell': True,
-                    'symbol': symbol,
-                    'quantity': rounded_quantity,
-                    'price': rounded_price,
-                    'estimasi_profit': estimasi_profit,
-                    'stop_loss': 0,
-                    'take_profit': 0
-                }
-                self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
-                notifikasi_sell(symbol, rounded_quantity, rounded_price, estimasi_profit)
-                notifikasi_balance(self.client)
-            else:
-                logging.info(f"Skipping sell for {symbol} due to negative profit: {estimasi_profit}")
+            logging.debug(f"Executed SELL for {symbol}: {quantity} at {price}")
+            self.latest_activities[symbol] = {'buy': False, 'sell': True, 'quantity': 0, 'price': 0, 'stop_loss': None, 'take_profit': None}
+            self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
+
+            notifikasi_sell(symbol, activity['quantity'], price)
         except BinanceAPIException as e:
-            logging.error(f"API error during sell {symbol}: {e}")
+            logging.error(f"Error executing SELL order for {symbol}: {e}")
         except Exception as e:
-            logging.error(f"Error executing sell {symbol}: {e}")
+            logging.error(f"Unexpected error during SELL for {symbol}: {e}")
 
     def run(self):
-        """Start the trading bot."""
-        try:
-            schedule.every(30).seconds.do(self.check_prices)
-            while self.running:
-                schedule.run_pending()
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logging.info("Bot stopped by user")
-            self.running = False
-        except Exception as e:
-            logging.error(f"Error in bot main loop: {e}")
-            self.running = False
+        while self.running:
+            self.check_prices()
+            time.sleep(60)
 
-    def stop(self):
-        """Stop the trading bot."""
-        self.running = False
+if __name__ == "__main__":
+    bot = BotTrading()
+    bot.run()

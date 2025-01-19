@@ -4,6 +4,9 @@ import os
 import pandas as pd
 import time
 from binance.client import Client
+from binance.exceptions import BinanceAPIException
+import random
+import datetime
 
 # Konfigurasi logging
 logging.basicConfig(
@@ -17,6 +20,8 @@ class CryptoPriceChecker:
     SELL_MULTIPLIER = 1.05
     DATA_DIR = "historical_data"
     CACHE_LIFETIME = 60  # Cache selama 60 detik untuk pengambilan data baru
+    MAX_RETRIES = 5
+    RETRY_BACKOFF = 2  # Waktu backoff eksponensial (detik)
 
     def __init__(self, client: Client):
         self.client = client
@@ -40,6 +45,20 @@ class CryptoPriceChecker:
         logging.info(f"Menyimpan data historis offline untuk {symbol} ke {path}...")
         data.to_csv(path, index=False)
 
+    def _retry_api_call(self, func, *args, **kwargs):
+        retries = 0
+        while retries < self.MAX_RETRIES:
+            try:
+                return func(*args, **kwargs)
+            except BinanceAPIException as e:
+                retries += 1
+                logging.error(f"API Error {e}, Retrying {retries}/{self.MAX_RETRIES}...")
+                time.sleep(self.RETRY_BACKOFF * (2 ** retries))  # Exponential backoff
+            except Exception as e:
+                logging.error(f"Unexpected error: {e}")
+                break
+        return None
+
     def get_historical_data(self, symbol: str, interval: str = '1m', start_time: str = '1 day ago UTC') -> pd.DataFrame:
         # Cek apakah data historis sudah tersedia dalam cache
         if symbol in self.cached_data and time.time() - self.cached_data[symbol]['timestamp'] < self.CACHE_LIFETIME:
@@ -49,7 +68,10 @@ class CryptoPriceChecker:
         offline_data = self._load_offline_data(symbol)
         try:
             logging.info(f"Mengambil data historis untuk {symbol} dari API...")
-            klines = self.client.get_historical_klines(symbol, interval, start_time)
+            klines = self._retry_api_call(self.client.get_historical_klines, symbol, interval, start_time)
+
+            if klines is None:
+                return offline_data
 
             new_data = pd.DataFrame(
                 klines,
@@ -65,7 +87,6 @@ class CryptoPriceChecker:
 
             # Gabungkan data baru dengan data offline jika ada
             if not offline_data.empty:
-                # Cek apakah ada data baru yang perlu ditambahkan
                 last_timestamp = offline_data['timestamp'].max() if not offline_data.empty else None
                 new_data_timestamp = new_data['timestamp'].max() if not new_data.empty else None
 
@@ -112,7 +133,9 @@ class CryptoPriceChecker:
     def get_current_price(self, symbol: str) -> float:
         try:
             logging.info(f"Mengambil harga saat ini untuk {symbol}...")
-            data = self.client.get_symbol_ticker(symbol=symbol)
+            data = self._retry_api_call(self.client.get_symbol_ticker, symbol=symbol)
+            if data is None:
+                return 0.0
             current_price = float(data['price'])
             logging.info(f"Harga saat ini untuk {symbol} berhasil diambil: {current_price}")
             return current_price
@@ -125,6 +148,8 @@ class CryptoPriceChecker:
             buy_price = self.calculate_dynamic_buy_price(symbol)
             sell_price = self.calculate_dynamic_sell_price(symbol)
             current_price = self.get_current_price(symbol)
+
+            logging.info(f"Buy price: {buy_price}, Sell price: {sell_price}, Current price: {current_price}")
 
             if current_price < buy_price and not latest_activity.get('buy', False):
                 logging.info(f"Harga saat ini untuk {symbol} lebih rendah dari harga beli: {current_price} < {buy_price}. Aksi: BUY")

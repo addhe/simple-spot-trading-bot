@@ -19,11 +19,16 @@ def kirim_notifikasi_telegram(pesan: str) -> None:
         logging.error('Gagal mengirim notifikasi Telegram')
 
 def notifikasi_buy(symbol: str, quantity: float, price: float) -> None:
-    pesan = f'Buy {symbol} sebanyak {quantity} dengan harga {price}'
+    # Menambahkan informasi lebih lengkap pada notifikasi
+    pesan = f'📈 *Buy Alert* 📉\n\n' \
+            f'Membeli {symbol} sebanyak {quantity} dengan harga {price} USDT.'
     kirim_notifikasi_telegram(pesan)
 
 def notifikasi_sell(symbol: str, quantity: float, price: float, estimasi_profit: float) -> None:
-    pesan = f'Sell {symbol} sebanyak {quantity} dengan harga {price}\nEstimasi Profit: {estimasi_profit}'
+    # Menambahkan estimasi profit dengan lebih jelas
+    pesan = f'💰 *Sell Alert* 💸\n\n' \
+            f'Menjual {symbol} sebanyak {quantity} dengan harga {price} USDT.\n' \
+            f'Estimasi Profit: {estimasi_profit:.2f} USDT'
     kirim_notifikasi_telegram(pesan)
 
 def notifikasi_balance(client) -> None:
@@ -41,13 +46,14 @@ def notifikasi_balance(client) -> None:
             elif asset in [symbol[:-4] for symbol in SYMBOLS]:  # Memeriksa saldo untuk simbol dasar
                 symbol_balances[asset] = free
 
-        # Menyusun pesan notifikasi
-        pesan = f'Balance USDT: {usdt_balance}\n'
+        # Menyusun pesan notifikasi dengan informasi saldo yang lebih rinci
+        pesan = f'📊 *Saldo Akun* 📉\n\n' \
+                f'Saldo USDT: {usdt_balance:.2f} USDT\n'
         for symbol, balance in symbol_balances.items():
-            pesan += f'{symbol} Balance: {balance}\n'
+            pesan += f'{symbol} Balance: {balance:.2f} {symbol}\n'
 
         kirim_notifikasi_telegram(pesan)
 
     except Exception as e:
         logging.error(f"Error saat mengambil saldo: {e}")
-        kirim_notifikasi_telegram(f"Error saat mengambil saldo: {e}")  # Kirim notifikasi kesalahan
+        kirim_notifikasi_telegram(f"❗ Error saat mengambil saldo: {e}")  # Kirim notifikasi kesalahan yang lebih jelas

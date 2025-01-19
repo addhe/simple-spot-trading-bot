@@ -1,4 +1,4 @@
-#src/strategy.py
+# src/strategy.py
 import pandas as pd
 import logging
 from binance.client import Client
@@ -143,10 +143,19 @@ class PriceActionStrategy:
             return False
 
     def should_buy(self, current_price: float) -> bool:
-        """Menentukan apakah harus membeli berdasarkan moving average."""
+        """Menentukan apakah harus membeli berdasarkan moving average dan tren pasar."""
         try:
             moving_average = self.calculate_moving_average(10)  # Rata-rata bergerak 10 periode
-            return current_price > moving_average  # Beli jika harga saat ini di atas moving average
+            if current_price > moving_average:  # Beli jika harga saat ini di atas moving average
+                return True
+            return False
         except Exception as e:
             logging.error(f"Error dalam menentukan apakah harus membeli untuk {self.symbol}: {e}")
             return False
+
+    def calculate_moving_average(self, window: int) -> float:
+        """Menghitung moving average dari harga penutupan."""
+        historical_data = self.get_historical_data()
+        if not historical_data.empty:
+            return historical_data['close'].rolling(window=window).mean().iloc[-1]
+        return 0
