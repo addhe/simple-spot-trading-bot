@@ -1,25 +1,26 @@
 # src/bot.py
 import os
-import schedule
-import time
-import pickle
 import hashlib
 import logging
-import math
 import sqlite3
+import asyncio
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config.settings import settings
 from config.config import SYMBOLS, INTERVAL
 from src.strategy import PriceActionStrategy
-from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
+from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell
 from src.check_price import CryptoPriceChecker
+from requests.exceptions import ConnectionError, Timeout
 
 # Konfigurasi logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    filename='bot.log',
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
 )
 
 class DataStorage:
@@ -67,7 +68,7 @@ class DataStorage:
 class BotTrading:
     def __init__(self):
         self.client = Client(settings['API_KEY'], settings['API_SECRET'])
-        self.client.API_URL = 'https://testnet.binance.vision/api'
+        self.client.API_URL = 'https://api.binance.com/api'
         self.strategies = {symbol: PriceActionStrategy(symbol) for symbol in SYMBOLS}
         self.storage = DataStorage()
         self.latest_activities = {symbol: self.storage.load_latest_activity(symbol) for symbol in SYMBOLS}
@@ -90,71 +91,59 @@ class BotTrading:
         """Initialize symbol information including precision and minimum notional requirements."""
         try:
             exchange_info = self.client.get_exchange_info()
-            valid_symbols = False
-
             for symbol_info in exchange_info['symbols']:
                 if symbol_info['symbol'] in SYMBOLS:
-                    try:
-                        # Set default values
-                        default_info = {
-                            'quantity_precision': 5,
-                            'price_precision': 2,
-                            'min_quantity': 0.00001,
-                            'max_quantity': 9999999,
-                            'min_notional': 10.0
-                        }
-
-                        lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-                        price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
-                        min_notional_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), None)
-
-                        symbol_specific_info = default_info.copy()
-
-                        if lot_size_filter:
-                            symbol_specific_info.update({
-                                'quantity_precision': self.get_precision_from_step_size(lot_size_filter['stepSize']),
-                                'min_quantity': float(lot_size_filter['minQty']),
-                                'max_quantity': float(lot_size_filter['maxQty'])
-                            })
-
-                        if price_filter:
-                            symbol_specific_info['price_precision'] = self.get_precision_from_step_size(price_filter['tickSize'])
-
-                        if min_notional_filter:
-                            symbol_specific_info['min_notional'] = float(min_notional_filter['minNotional'])
-
-                        self.symbol_info[symbol_info['symbol']] = symbol_specific_info
-                        valid_symbols = True
-                        logging.info(f"Initialized {symbol_info['symbol']} info: {symbol_specific_info}")
-
-                    except Exception as e:
-                        logging.warning(f"Error processing filters for {symbol_info['symbol']}, using default values: {str(e)}")
-                        self.symbol_info[symbol_info['symbol']] = default_info
-                        valid_symbols = True
-
-            if not valid_symbols:
-                logging.warning("No symbols initialized with API data, using defaults")
-                for symbol in SYMBOLS:
-                    self.symbol_info[symbol] = {
-                        'quantity_precision': 5,
-                        'price_precision': 2,
-                        'min_quantity': 0.00001,
-                        'max_quantity': 9999999,
-                        'min_notional': 10.0
-                    }
-
+                    self.symbol_info[symbol_info['symbol']] = self.extract_symbol_info(symbol_info)
+                    logging.info(f"Initialized {symbol_info['symbol']} info: {self.symbol_info[symbol_info['symbol']]}")
         except Exception as e:
             logging.error(f"Error initializing symbol info: {str(e)}")
-            # Set default values for all configured symbols
-            for symbol in SYMBOLS:
-                self.symbol_info[symbol] = {
-                    'quantity_precision': 5,
-                    'price_precision': 2,
-                    'min_quantity': 0.00001,
-                    'max_quantity': 9999999,
-                    'min_notional': 10.0
-                }
-            logging.warning("Using default symbol information due to initialization error")
+            self.set_default_symbol_info()
+
+    def extract_symbol_info(self, symbol_info):
+        """Extract necessary symbol information from exchange info."""
+        symbol_specific_info = {
+            'quantity_precision': 5,
+            'price_precision': 2,
+            'min_quantity': 0.00001,
+            'max_quantity': 9999999,
+            'min_notional': 10.0
+        }
+
+        try:
+            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+            price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+            min_notional_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), None)
+
+            if lot_size_filter:
+                symbol_specific_info.update({
+                    'quantity_precision': self.get_precision_from_step_size(lot_size_filter['stepSize']),
+                    'min_quantity': float(lot_size_filter['minQty']),
+                    'max_quantity': float(lot_size_filter['maxQty'])
+                })
+
+            if price_filter:
+                symbol_specific_info['price_precision'] = self.get_precision_from_step_size(price_filter['tickSize'])
+
+            if min_notional_filter:
+                symbol_specific_info['min_notional'] = float(min_notional_filter['minNotional'])
+
+            return symbol_specific_info
+
+        except Exception as e:
+            logging.warning(f"Error processing filters for {symbol_info['symbol']}, using default values: {str(e)}")
+            return symbol_specific_info
+
+    def set_default_symbol_info(self):
+        """Set default values for all symbols if initialization fails."""
+        for symbol in SYMBOLS:
+            self.symbol_info[symbol] = {
+                'quantity_precision': 5,
+                'price_precision': 2,
+                'min_quantity': 0.00001,
+                'max_quantity': 9999999,
+                'min_notional': 10.0
+            }
+        logging.warning("Using default symbol information due to initialization error")
 
     def get_usdt_balance(self) -> float:
         try:
@@ -206,7 +195,7 @@ class BotTrading:
             logging.error(f"Error calculating quantity for {symbol}: {e}")
             return 0.0
 
-    def check_prices(self):
+    async def check_prices(self):
         for symbol in SYMBOLS:
             try:
                 strategy = self.strategies[symbol]
@@ -217,19 +206,19 @@ class BotTrading:
                 if action == 'BUY' and not latest_activity['buy'] and not self.has_active_orders(symbol, 'BUY'):
                     quantity = self.calculate_dynamic_quantity(symbol, price)
                     if quantity > 0:
-                        self.execute_buy(symbol, price, quantity, strategy)
+                        await self.execute_buy(symbol, price, quantity, strategy)
 
                 # Cek jika action adalah SELL dan sudah ada pembelian sebelumnya
                 elif action == 'SELL' and latest_activity['buy'] and not self.has_active_orders(symbol, 'SELL'):
-                    self.execute_sell(symbol, price, latest_activity)
+                    await self.execute_sell(symbol, price, latest_activity)
 
                 # Cek jika harus menjual berdasarkan strategi
                 if latest_activity['buy'] and strategy.should_sell(price, latest_activity):
-                    self.execute_sell(symbol, price, latest_activity)
+                    await self.execute_sell(symbol, price, latest_activity)
             except Exception as e:
                 logging.error(f"Error checking prices for {symbol}: {e}")
 
-    def execute_buy(self, symbol: str, price: float, quantity: float, strategy: PriceActionStrategy):
+    async def execute_buy(self, symbol: str, price: float, quantity: float, strategy: PriceActionStrategy):
         try:
             rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
             rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
@@ -242,7 +231,7 @@ class BotTrading:
                 price=rounded_price,
                 timeInForce='GTC'
             )
-            logging.debug(f"Executed BUY for {symbol}: {quantity} at {price}")
+            logging.info(f"Executed BUY for {symbol}: {quantity} at {price}")
 
             # Save activity and notify
             self.latest_activities[symbol] = {'buy': True, 'sell': False, 'quantity': quantity, 'price': price, 'stop_loss': None, 'take_profit': None}
@@ -254,7 +243,7 @@ class BotTrading:
         except Exception as e:
             logging.error(f"Unexpected error during BUY for {symbol}: {e}")
 
-    def execute_sell(self, symbol: str, price: float, activity):
+    async def execute_sell(self, symbol: str, price: float, activity):
         try:
             quantity = activity['quantity']
             rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
@@ -269,7 +258,7 @@ class BotTrading:
                 timeInForce='GTC'
             )
 
-            logging.debug(f"Executed SELL for {symbol}: {quantity} at {price}")
+            logging.info(f"Executed SELL for {symbol}: {quantity} at {price}")
             self.latest_activities[symbol] = {'buy': False, 'sell': True, 'quantity': 0, 'price': 0, 'stop_loss': None, 'take_profit': None}
             self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
 
@@ -279,11 +268,14 @@ class BotTrading:
         except Exception as e:
             logging.error(f"Unexpected error during SELL for {symbol}: {e}")
 
-    def run(self):
-        while self.running:
-            self.check_prices()
-            time.sleep(60)
+    async def run(self):
+        try:
+            while self.running:
+                await self.check_prices()
+                await asyncio.sleep(60)  # Delay to prevent hitting rate limits
+        except Exception as e:
+            logging.error(f"Error during bot execution: {e}")
 
 if __name__ == "__main__":
     bot = BotTrading()
-    bot.run()
+    asyncio.run(bot.run())
