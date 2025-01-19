@@ -112,10 +112,10 @@ class CryptoPriceChecker:
             logging.error(f"Error saat mengambil data historis untuk {symbol}: {e}")
             return offline_data if not offline_data.empty else pd.DataFrame()
 
-    def calculate_dynamic_price(self, symbol: str, multiplier: float) -> float:
-        """Menghitung harga dinamis berdasarkan data historis yang telah diambil."""
+    def calculate_dynamic_price(self, symbol: str, multiplier: float, tolerance: float = 0.01) -> float:
+        """Menghitung harga dinamis dengan toleransi margin untuk meminimalkan hold."""
         try:
-            logging.info(f"Menghitung harga dinamis untuk {symbol}...")
+            logging.info(f"Menghitung harga dinamis untuk {symbol} dengan toleransi {tolerance}...")
             historical_data = self.get_historical_data(symbol)
             if historical_data.empty:
                 logging.warning(f"Tidak ada data historis untuk {symbol}. Menggunakan harga 0.")
@@ -124,10 +124,22 @@ class CryptoPriceChecker:
             prices = historical_data['close'].values
             dynamic_price = prices.mean() * multiplier
             logging.info(f"Harga dinamis untuk {symbol} berhasil dihitung: {dynamic_price}")
-            return dynamic_price
+
+            # Adjust the dynamic price with a tolerance margin
+            adjusted_price = dynamic_price * (1 + tolerance)
+            return adjusted_price
         except Exception as e:
             logging.error(f"Error saat menghitung harga dinamis untuk {symbol}: {e}")
             return 0.0
+
+    def log_balance(self):
+        """Mencetak saldo saat ini ke log."""
+        try:
+            balance = self.client.get_asset_balance(asset='USDT')  # Ganti dengan aset yang relevan
+            if balance:
+                logging.info(f"Saldo USDT saat ini: {balance['free']}")
+        except Exception as e:
+            logging.error(f"Error saat mengambil saldo: {e}")
 
     def calculate_dynamic_buy_price(self, symbol: str) -> float:
         """Menghitung harga beli dinamis untuk simbol tertentu."""
