@@ -1,39 +1,75 @@
 # src/strategy.py
 import pandas as pd
+import numpy as np
 import logging
+import os
+import time
+import pickle
 from binance.client import Client
 from config.settings import settings
-from src.check_price import CryptoPriceChecker  # Mengimpor kelas CryptoPriceChecker
-import numpy as np
+from retrying import retry
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class PriceActionStrategy:
-    def __init__(self, symbol: str):
+    def __init__(self, symbol: str, use_testnet=False):
         self.symbol = symbol
-        self.client = Client(settings['API_KEY'], settings['API_SECRET'])
-        self.client.API_URL = 'https://testnet.binance.vision/api'
+        self.use_testnet = use_testnet
+        self.client = self._initialize_binance_client()
+        self.cache_file = f"cache_{self.symbol}.pkl"  # Cache file name
         self.data = pd.DataFrame()
-        self.price_checker = CryptoPriceChecker(self.client)  # Membuat instance dari CryptoPriceChecker
-        self.cached_data = None  # Menyimpan data historis yang sudah diambil sebelumnya
 
-    def check_price(self, latest_activity: dict) -> tuple:
-        """Memeriksa harga saat ini dan menentukan aksi trading."""
+    def _initialize_binance_client(self):
+        """Initialize Binance client with API keys."""
         try:
-            return self.price_checker.check_price(self.symbol, latest_activity)  # Menggunakan instance price_checker
+            api_url = 'https://testnet.binance.vision/api' if self.use_testnet else 'https://api.binance.com/api'
+            client = Client(settings['API_KEY'], settings['API_SECRET'])
+            client.API_URL = api_url
+            logging.info(f"Binance client initialized for symbol {self.symbol}. Testnet: {self.use_testnet}")
+            return client
         except Exception as e:
-            logging.error(f"Error saat memeriksa harga untuk {self.symbol}: {e}")
-            return 'HOLD', 0  # Kembalikan 'HOLD' jika terjadi kesalahan
+            logging.error(f"Error initializing Binance client: {e}")
+            raise
 
-    def get_historical_data(self, cache=True) -> pd.DataFrame:
-        """Mengambil data historis untuk simbol yang ditentukan, dengan cache data untuk optimisasi."""
-        if cache and self.cached_data is not None:
-            return self.cached_data  # Kembalikan data yang sudah ada di cache
-
+    def load_cached_data(self):
+        """Try to load cached data for optimization, only valid for 5 minutes."""
         try:
+            if os.path.exists(self.cache_file):
+                with open(self.cache_file, 'rb') as f:
+                    cached_data = pickle.load(f)
+                    if time.time() - cached_data['timestamp'] < 300:  # Cache valid for 5 minutes
+                        logging.info("Loaded data from cache.")
+                        return cached_data['data']
+            return None
+        except Exception as e:
+            logging.error(f"Error loading cached data: {e}")
+            return None
+
+    def save_to_cache(self, data):
+        """Save data to cache."""
+        try:
+            with open(self.cache_file, 'wb') as f:
+                pickle.dump({'timestamp': time.time(), 'data': data}, f)
+            logging.info("Data saved to cache.")
+        except Exception as e:
+            logging.error(f"Error saving to cache: {e}")
+
+    @retry(stop_max_attempt_number=5, wait_fixed=2000)
+    def get_historical_data(self, cache=True) -> pd.DataFrame:
+        """Fetch historical data with optional caching."""
+        try:
+            if cache:
+                cached_data = self.load_cached_data()
+                if cached_data is not None:
+                    return cached_data
+
             klines = self.client.get_historical_klines(
                 self.symbol,
-                '1m',  # Interval 1 menit
-                '1 day ago UTC'  # Data dari 1 hari ke belakang
+                '1m',  # Interval 1 minute
+                '1 day ago UTC'  # Data for the last 24 hours
             )
+
             historical_data = pd.DataFrame(
                 klines,
                 columns=[
@@ -46,95 +82,59 @@ class PriceActionStrategy:
             historical_data['timestamp'] = pd.to_datetime(historical_data['timestamp'], unit='ms')
             historical_data['close'] = historical_data['close'].astype(float)
 
-            # Simpan data untuk penggunaan berikutnya
-            self.cached_data = historical_data
+            self.save_to_cache(historical_data)
             return historical_data
         except Exception as e:
-            logging.error(f"Error saat mengambil data historis untuk {self.symbol}: {e}")
-            return pd.DataFrame()  # Kembalikan DataFrame kosong jika terjadi kesalahan
+            logging.error(f"Error getting historical data for {self.symbol}: {e}")
+            return pd.DataFrame()
 
     def calculate_dynamic_buy_price(self) -> float:
-        """Menghitung harga beli dinamis berdasarkan data historis dan volatilitas pasar (ATR)."""
+        """Calculate dynamic buy price based on market volatility (ATR)."""
         try:
             historical_data = self.get_historical_data()
             if historical_data.empty:
-                logging.warning("Tidak ada data historis. Menggunakan harga default untuk buy.")
-                return 10000  # Default jika tidak ada data historis
+                logging.warning(f"No historical data for {self.symbol}. Using default buy price.")
+                return 10000  # Default if no historical data
 
             prices = historical_data['close'].values
-            moving_average = prices[-10:].mean()  # Rata-rata dari 10 harga terakhir
+            moving_average = prices[-10:].mean()  # Last 10 closing prices
+            atr = self.calculate_atr(historical_data)
 
-            # Menghitung ATR untuk volatilitas
-            atr = self.calculate_atr()
             if atr == 0:
-                logging.warning(f"ATR untuk {self.symbol} adalah 0, menggunakan multiplier default.")
-                return moving_average * 0.95  # Harga beli dinamis, 5% di bawah rata-rata
+                logging.warning(f"ATR for {self.symbol} is 0, using default multiplier.")
+                return moving_average * 0.95  # Dynamic buy price, 5% below moving average
 
-            dynamic_buy_price = moving_average * (1 - (0.05 + atr * 0.02))  # 5% dikurangi volatilitas
-
+            dynamic_buy_price = moving_average * (1 - (0.05 + atr * 0.02))  # 5% minus volatility
             return dynamic_buy_price
         except Exception as e:
-            logging.error(f"Error dalam menghitung harga beli dinamis untuk {self.symbol}: {e}")
-            return 10000  # Kembalikan default jika terjadi kesalahan
+            logging.error(f"Error calculating dynamic buy price for {self.symbol}: {e}")
+            return 10000
 
     def calculate_dynamic_sell_price(self) -> float:
-        """Menghitung harga jual dinamis berdasarkan data historis dan volatilitas pasar (ATR)."""
+        """Calculate dynamic sell price based on market volatility (ATR)."""
         try:
             historical_data = self.get_historical_data()
             if historical_data.empty:
-                logging.warning("Tidak ada data historis. Menggunakan harga default untuk sell.")
-                return 9000  # Default jika tidak ada data historis
+                logging.warning(f"No historical data for {self.symbol}. Using default sell price.")
+                return 9000  # Default if no historical data
 
             prices = historical_data['close'].values
-            moving_average = prices[-10:].mean()  # Rata-rata dari 10 harga terakhir
+            moving_average = prices[-10:].mean()  # Last 10 closing prices
+            atr = self.calculate_atr(historical_data)
 
-            # Menghitung ATR untuk volatilitas
-            atr = self.calculate_atr()
             if atr == 0:
-                logging.warning(f"ATR untuk {self.symbol} adalah 0, menggunakan multiplier default.")
-                return moving_average * 1.05  # Harga jual dinamis, 5% di atas rata-rata
+                logging.warning(f"ATR for {self.symbol} is 0, using default multiplier.")
+                return moving_average * 1.05  # Dynamic sell price, 5% above moving average
 
-            dynamic_sell_price = moving_average * (1 + (0.05 + atr * 0.02))  # 5% ditambah volatilitas
-
+            dynamic_sell_price = moving_average * (1 + (0.05 + atr * 0.02))  # 5% plus volatility
             return dynamic_sell_price
         except Exception as e:
-            logging.error(f"Error dalam menghitung harga jual dinamis untuk {self.symbol}: {e}")
-            return 9000  # Kembalikan default jika terjadi kesalahan
+            logging.error(f"Error calculating dynamic sell price for {self.symbol}: {e}")
+            return 9000
 
-    def manage_risk(self, action: str, price: float, quantity: float) -> dict:
-        """Mengatur stop-loss dan take-profit berdasarkan ATR."""
+    def calculate_atr(self, historical_data: pd.DataFrame) -> float:
+        """Calculate Average True Range (ATR) for market volatility."""
         try:
-            atr = self.calculate_atr()
-            if atr == 0:
-                logging.warning(f"ATR untuk {self.symbol} adalah 0. Mengabaikan pengaturan stop-loss dan take-profit.")
-                return {}
-
-            if action == 'BUY':
-                stop_loss = price - (2 * atr)
-                take_profit = price + (3 * atr)
-            elif action == 'SELL':
-                stop_loss = price + (2 * atr)
-                take_profit = price - (3 * atr)
-            else:
-                return {}
-
-            return {
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
-                'quantity': quantity
-            }
-        except Exception as e:
-            logging.error(f"Error dalam mengatur risiko untuk {action} pada harga {price}: {e}")
-            return {}
-
-    def calculate_atr(self) -> float:
-        """Menghitung Average True Range (ATR) untuk volatilitas."""
-        try:
-            historical_data = self.get_historical_data()
-            if historical_data.empty:
-                logging.warning(f"Tidak ada data historis untuk ATR di {self.symbol}.")
-                return 0
-
             high_low = historical_data['high'] - historical_data['low']
             high_close = abs(historical_data['high'] - historical_data['close'].shift())
             low_close = abs(historical_data['low'] - historical_data['close'].shift())
@@ -143,36 +143,10 @@ class PriceActionStrategy:
             atr = true_range.rolling(window=14).mean().iloc[-1]
             return atr
         except Exception as e:
-            logging.error(f"Error dalam menghitung ATR untuk {self.symbol}: {e}")
+            logging.error(f"Error calculating ATR for {self.symbol}: {e}")
             return 0
 
-    def should_sell(self, current_price: float, latest_activity: dict) -> bool:
-        """Menentukan apakah harus menjual berdasarkan kondisi stop-loss atau take-profit."""
-        try:
-            if latest_activity['buy']:
-                stop_loss = latest_activity['stop_loss']
-                take_profit = latest_activity['take_profit']
-                if current_price <= stop_loss or current_price >= take_profit:
-                    return True
-            return False
-        except Exception as e:
-            logging.error(f"Error dalam menentukan apakah harus menjual untuk {self.symbol}: {e}")
-            return False
-
-    def should_buy(self, current_price: float) -> bool:
-        """Menentukan apakah harus membeli berdasarkan moving average dan tren pasar."""
-        try:
-            moving_average = self.calculate_moving_average(10)  # Rata-rata bergerak 10 periode
-            if current_price > moving_average:  # Beli jika harga saat ini di atas moving average
-                return True
-            return False
-        except Exception as e:
-            logging.error(f"Error dalam menentukan apakah harus membeli untuk {self.symbol}: {e}")
-            return False
-
-    def calculate_moving_average(self, window: int) -> float:
-        """Menghitung moving average dari harga penutupan."""
-        historical_data = self.get_historical_data()
-        if not historical_data.empty:
-            return historical_data['close'].rolling(window=window).mean().iloc[-1]
-        return 0
+# Usage example in main.py
+# strategy = PriceActionStrategy(symbol='BTCUSDT', use_testnet=True)
+# buy_price = strategy.calculate_dynamic_buy_price()
+# sell_price = strategy.calculate_dynamic_sell_price()
