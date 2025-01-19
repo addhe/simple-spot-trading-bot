@@ -5,79 +5,157 @@ import pickle
 import hashlib
 import logging
 import math
+import sqlite3
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config.settings import settings
 from config.config import SYMBOLS, INTERVAL
 from src.strategy import PriceActionStrategy
 from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell, notifikasi_balance
-from src.check_price import CryptoPriceChecker  # Mengimpor kelas CryptoPriceChecker
+from src.check_price import CryptoPriceChecker
 
 # Konfigurasi logging
-logging.basicConfig(level=logging.DEBUG, filename='bot.log',
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.DEBUG,
+    filename='bot.log',
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+class DataStorage:
+    def __init__(self, db_path='bot_trading.db'):
+        self.conn = sqlite3.connect(db_path)
+        self.create_tables()
+
+    def create_tables(self):
+        cursor = self.conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS latest_activity (
+            symbol TEXT PRIMARY KEY,
+            buy INTEGER,
+            sell INTEGER,
+            quantity REAL,
+            price REAL,
+            stop_loss REAL,
+            take_profit REAL
+        )''')
+        self.conn.commit()
+
+    def save_latest_activity(self, symbol, activity):
+        cursor = self.conn.cursor()
+        cursor.execute('''REPLACE INTO latest_activity
+                          (symbol, buy, sell, quantity, price, stop_loss, take_profit)
+                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                       (symbol, activity['buy'], activity['sell'], activity['quantity'],
+                        activity['price'], activity['stop_loss'], activity['take_profit']))
+        self.conn.commit()
+
+    def load_latest_activity(self, symbol):
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM latest_activity WHERE symbol = ?', (symbol,))
+        row = cursor.fetchone()
+        if row:
+            return {
+                'buy': bool(row[1]),
+                'sell': bool(row[2]),
+                'quantity': row[3],
+                'price': row[4],
+                'stop_loss': row[5],
+                'take_profit': row[6],
+            }
+        return {'buy': False, 'sell': False, 'quantity': 0, 'price': 0, 'stop_loss': 0, 'take_profit': 0}
 
 class BotTrading:
     def __init__(self):
         self.client = Client(settings['API_KEY'], settings['API_SECRET'])
         self.client.API_URL = 'https://testnet.binance.vision/api'
         self.strategies = {symbol: PriceActionStrategy(symbol) for symbol in SYMBOLS}
-        self.latest_activities = {symbol: self.load_latest_activity(symbol) for symbol in SYMBOLS}
+        self.storage = DataStorage()
+        self.latest_activities = {symbol: self.storage.load_latest_activity(symbol) for symbol in SYMBOLS}
         self.config_hash = self.get_config_hash()
-        self.historical_data = {symbol: self.load_historical_data(symbol) for symbol in SYMBOLS}
         self.running = True
         self.symbol_info = {}
         self.init_symbol_info()
-        self.price_checker = CryptoPriceChecker(self.client)  # Menggunakan CryptoPriceChecker
+        self.price_checker = CryptoPriceChecker(self.client)
+
+    def get_config_hash(self):
+        """Menghitung hash dari konfigurasi bot."""
+        try:
+            config_str = f"{settings['API_KEY']}{settings['API_SECRET']}{str(SYMBOLS)}{INTERVAL}"
+            return hashlib.md5(config_str.encode()).hexdigest()
+        except Exception as e:
+            logging.error(f"Error saat menghitung hash konfigurasi: {e}")
+            return None
 
     def init_symbol_info(self):
         """Initialize symbol information including precision and minimum notional requirements."""
         try:
             exchange_info = self.client.get_exchange_info()
+            valid_symbols = False
+
             for symbol_info in exchange_info['symbols']:
                 if symbol_info['symbol'] in SYMBOLS:
                     try:
-                        # Get LOT_SIZE filter
-                        lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-                        if not lot_size_filter:
-                            logging.warning(f"No LOT_SIZE filter found for {symbol_info['symbol']}")
-                            continue
-
-                        # Get PRICE_FILTER
-                        price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
-                        if not price_filter:
-                            logging.warning(f"No PRICE_FILTER filter found for {symbol_info['symbol']}")
-                            continue
-
-                        # Get MIN_NOTIONAL filter, use default if not found
-                        min_notional_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), None)
-                        min_notional = float(min_notional_filter['minNotional']) if min_notional_filter else 10.0  # Default to 10 USDT if not found
-
-                        self.symbol_info[symbol_info['symbol']] = {
-                            'quantity_precision': self.get_precision_from_step_size(lot_size_filter['stepSize']),
-                            'price_precision': self.get_precision_from_step_size(price_filter['tickSize']),
-                            'min_quantity': float(lot_size_filter['minQty']),
-                            'max_quantity': float(lot_size_filter['maxQty']),
-                            'min_notional': min_notional
+                        # Set default values
+                        default_info = {
+                            'quantity_precision': 5,
+                            'price_precision': 2,
+                            'min_quantity': 0.00001,
+                            'max_quantity': 9999999,
+                            'min_notional': 10.0
                         }
 
-                        logging.info(f"Initialized {symbol_info['symbol']} info: {self.symbol_info[symbol_info['symbol']]}")
+                        lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                        price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+                        min_notional_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), None)
+
+                        symbol_specific_info = default_info.copy()
+
+                        if lot_size_filter:
+                            symbol_specific_info.update({
+                                'quantity_precision': self.get_precision_from_step_size(lot_size_filter['stepSize']),
+                                'min_quantity': float(lot_size_filter['minQty']),
+                                'max_quantity': float(lot_size_filter['maxQty'])
+                            })
+
+                        if price_filter:
+                            symbol_specific_info['price_precision'] = self.get_precision_from_step_size(price_filter['tickSize'])
+
+                        if min_notional_filter:
+                            symbol_specific_info['min_notional'] = float(min_notional_filter['minNotional'])
+
+                        self.symbol_info[symbol_info['symbol']] = symbol_specific_info
+                        valid_symbols = True
+                        logging.info(f"Initialized {symbol_info['symbol']} info: {symbol_specific_info}")
 
                     except Exception as e:
-                        logging.error(f"Error processing filters for {symbol_info['symbol']}: {str(e)}")
-                        continue
+                        logging.warning(f"Error processing filters for {symbol_info['symbol']}, using default values: {str(e)}")
+                        self.symbol_info[symbol_info['symbol']] = default_info
+                        valid_symbols = True
 
-            if not self.symbol_info:
-                raise Exception("No valid symbols could be initialized")
-
-            logging.info(f"Successfully initialized {len(self.symbol_info)} symbols")
+            if not valid_symbols:
+                logging.warning("No symbols initialized with API data, using defaults")
+                for symbol in SYMBOLS:
+                    self.symbol_info[symbol] = {
+                        'quantity_precision': 5,
+                        'price_precision': 2,
+                        'min_quantity': 0.00001,
+                        'max_quantity': 9999999,
+                        'min_notional': 10.0
+                    }
 
         except Exception as e:
             logging.error(f"Error initializing symbol info: {str(e)}")
-            raise
+            # Set default values for all configured symbols
+            for symbol in SYMBOLS:
+                self.symbol_info[symbol] = {
+                    'quantity_precision': 5,
+                    'price_precision': 2,
+                    'min_quantity': 0.00001,
+                    'max_quantity': 9999999,
+                    'min_notional': 10.0
+                }
+            logging.warning("Using default symbol information due to initialization error")
 
     def get_usdt_balance(self) -> float:
-        """Get available USDT balance."""
         try:
             balance = self.client.get_asset_balance(asset='USDT')
             return float(balance['free'])
@@ -86,7 +164,6 @@ class BotTrading:
             return 0.0
 
     def get_precision_from_step_size(self, step_size: str) -> int:
-        """Get precision from step size string."""
         try:
             step_size = float(step_size)
             if step_size == 1.0:
@@ -97,79 +174,30 @@ class BotTrading:
             return 0
         except Exception as e:
             logging.error(f"Error calculating precision from step size {step_size}: {str(e)}")
-            return 8  # Default to 8 decimal places if there's an error
+            return 8
 
-    def round_step_size(self, quantity: float, step_size: float) -> float:
-        """Round quantity to step size."""
-        return math.floor(quantity / step_size) * step_size
-
-    def get_config_hash(self):
-        """Calculate hash of current configuration settings."""
-        config_str = f"{settings['API_KEY']}{settings['API_SECRET']}{str(SYMBOLS)}{INTERVAL}"
-        return hashlib.md5(config_str.encode()).hexdigest()
-
-    def load_historical_data(self, symbol: str) -> list:
-        """Load historical price data for a symbol."""
+    def has_active_orders(self, symbol: str, side: str) -> bool:
+        """Cek apakah ada order aktif untuk simbol tertentu."""
         try:
-            with open(f'historical_data_{symbol}.pkl', 'rb') as f:
-                return pickle.load(f)
-        except FileNotFoundError:
-            return []
+            open_orders = self.client.get_open_orders(symbol=symbol)
+            return any(order['side'] == side for order in open_orders)
         except Exception as e:
-            logging.error(f"Error loading historical data for {symbol}: {e}")
-            return []
-
-    def save_historical_data(self, symbol: str) -> None:
-        """Save historical price data for a symbol."""
-        try:
-            with open(f'historical_data_{symbol}.pkl', 'wb') as f:
-                pickle.dump(self.historical_data[symbol], f)
-        except Exception as e:
-            logging.error(f"Error saving historical data for {symbol}: {e}")
-
-    def load_latest_activity(self, symbol: str) -> dict:
-        try:
-            with open(f'latest_activity_{symbol}.pkl', 'rb') as f:
-                return pickle.load(f)
-        except FileNotFoundError:
-            return {'buy': False, 'sell': False, 'symbol': symbol, 'quantity': 0, 'price': 0}
-        except Exception as e:
-            logging.error(f"Error saat memuat aktivitas terbaru untuk {symbol}: {e}")
-            return {'buy': False, 'sell': False, 'symbol': symbol, 'quantity': 0, 'price': 0}
-
-    def save_latest_activity(self, symbol: str) -> None:
-        try:
-            with open(f'latest_activity_{symbol}.pkl', 'wb') as f:
-                pickle.dump(self.latest_activities[symbol], f)
-        except Exception as e:
-            logging.error(f"Error saat menyimpan aktivitas terbaru untuk {symbol}: {e}")
+            logging.error(f"Error checking active orders for {symbol}: {e}")
+            return False
 
     def calculate_dynamic_quantity(self, symbol: str, price: float) -> float:
         try:
-            # Get available USDT balance
             available_usdt = self.get_usdt_balance()
             logging.info(f"Available USDT balance: {available_usdt}")
 
-            # Calculate maximum quantity based on available balance
             raw_quantity = available_usdt / price
-
-            # Get symbol precision info
             symbol_info = self.symbol_info[symbol]
-            quantity_precision = symbol_info['quantity_precision']
-            min_quantity = symbol_info['min_quantity']
-            max_quantity = symbol_info['max_quantity']
-            min_notional = symbol_info['min_notional']
 
-            # Round to the correct precision
-            quantity = round(raw_quantity, quantity_precision)
+            quantity = round(raw_quantity, symbol_info['quantity_precision'])
+            quantity = max(symbol_info['min_quantity'], min(quantity, symbol_info['max_quantity']))
 
-            # Ensure quantity is within allowed range
-            quantity = max(min_quantity, min(quantity, max_quantity))
-
-            # Check if order meets minimum notional value
-            notional_value = quantity * price
-            if notional_value < min_notional:
-                logging.warning(f"Order value ({notional_value} USDT) is below minimum notional ({min_notional} USDT)")
+            if quantity * price < symbol_info['min_notional']:
+                logging.warning(f"Order value below minimum notional ({symbol_info['min_notional']})")
                 return 0.0
 
             return quantity
@@ -177,59 +205,30 @@ class BotTrading:
             logging.error(f"Error calculating quantity for {symbol}: {e}")
             return 0.0
 
-    def check_prices(self) -> None:
+    def check_prices(self):
         for symbol in SYMBOLS:
             try:
                 strategy = self.strategies[symbol]
                 latest_activity = self.latest_activities[symbol]
-                action, price = self.price_checker.check_price(symbol, latest_activity)  # Menggunakan price_checker
-                price = float(price)  # Ensure price is float
+                action, price = self.price_checker.check_price(symbol, latest_activity)
 
-                # Only proceed with BUY if we have sufficient USDT balance
-                if action == 'BUY':
-                    available_usdt = self.get_usdt_balance()
-                    min_notional = self.symbol_info[symbol]['min_notional']
-
-                    if available_usdt < min_notional:
-                        logging.warning(f"Insufficient USDT balance ({available_usdt}) for minimum notional ({min_notional})")
-                        continue
-
+                if action == 'BUY' and not self.has_active_orders(symbol, 'BUY'):
                     quantity = self.calculate_dynamic_quantity(symbol, price)
-
                     if quantity > 0:
-                        logging.info(f"Melakukan pembelian {symbol} pada harga {price} sebanyak {quantity}")
                         self.execute_buy(symbol, price, quantity, strategy)
 
-                elif action == 'SELL':
+                elif action == 'SELL' and not self.has_active_orders(symbol, 'SELL'):
                     self.execute_sell(symbol, price, latest_activity)
 
-                if latest_activity['buy']:
-                    if strategy.should_sell(price, latest_activity):
-                        self.execute_sell(symbol, price, latest_activity)
-
-                if self.historical_data[symbol] and self.historical_data[symbol][-1]['price'] != price:
-                    self.historical_data[symbol].append({
-                        'timestamp': time.time(),
-                        'price': float(price),  # Ensure price is float
-                        'buy_price': float(strategy.calculate_dynamic_buy_price()),  # Ensure price is float
-                        'sell_price': float(strategy.calculate_dynamic_sell_price())  # Ensure price is float
-                    })
-                    self.save_historical_data(symbol)
-
+                if latest_activity['buy'] and strategy.should_sell(price, latest_activity):
+                    self.execute_sell(symbol, price, latest_activity)
             except Exception as e:
-                logging.error(f"Error dalam check_price untuk {symbol}: {e}")
-                time.sleep(1)
-                continue
+                logging.error(f"Error checking prices for {symbol}: {e}")
 
-    def execute_buy(self, symbol: str, price: float, quantity: float, strategy) -> None:
+    def execute_buy(self, symbol: str, price: float, quantity: float, strategy):
         try:
-            # Round price according to symbol's price precision
-            price_precision = self.symbol_info[symbol]['price_precision']
-            rounded_price = round(price, price_precision)
-
-            # Round quantity according to symbol's quantity precision
-            quantity_precision = self.symbol_info[symbol]['quantity_precision']
-            rounded_quantity = round(quantity, quantity_precision)
+            rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
+            rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
 
             order = self.client.create_order(
                 symbol=symbol,
@@ -248,30 +247,23 @@ class BotTrading:
                 'symbol': symbol,
                 'quantity': rounded_quantity,
                 'price': rounded_price,
-                'estimasi_profit': 0,
                 'stop_loss': risk_management['stop_loss'],
                 'take_profit': risk_management['take_profit']
             }
-            self.save_latest_activity(symbol)
+            self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
             notifikasi_buy(symbol, rounded_quantity, rounded_price)
             notifikasi_balance(self.client)
         except BinanceAPIException as e:
-            logging.error(f"Error API saat melakukan pembelian {symbol}: {e}")
+            logging.error(f"API error during buy {symbol}: {e}")
         except Exception as e:
-            logging.error(f"Error saat melakukan pembelian {symbol}: {e}")
+            logging.error(f"Error executing buy {symbol}: {e}")
 
-    def execute_sell(self, symbol: str, price: float, latest_activity: dict) -> None:
-        estimasi_profit = price - latest_activity['price'] if latest_activity['price'] else 0
-        if estimasi_profit > 0:
-            logging.info(f"Melakukan penjualan {symbol} pada harga {price} sebanyak {latest_activity['quantity']}")
-            try:
-                # Round price according to symbol's price precision
-                price_precision = self.symbol_info[symbol]['price_precision']
-                rounded_price = round(price, price_precision)
-
-                # Round quantity according to symbol's quantity precision
-                quantity_precision = self.symbol_info[symbol]['quantity_precision']
-                rounded_quantity = round(latest_activity['quantity'], quantity_precision)
+    def execute_sell(self, symbol: str, price: float, latest_activity):
+        try:
+            estimasi_profit = price - latest_activity['price'] if latest_activity['price'] else 0
+            if estimasi_profit > 0:
+                rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
+                rounded_quantity = round(latest_activity['quantity'], self.symbol_info[symbol]['quantity_precision'])
 
                 order = self.client.create_order(
                     symbol=symbol,
@@ -282,6 +274,7 @@ class BotTrading:
                     timeInForce='GTC'
                 )
                 logging.debug(f"Order Detail: {order}")
+
                 self.latest_activities[symbol] = {
                     'buy': False,
                     'sell': True,
@@ -292,20 +285,30 @@ class BotTrading:
                     'stop_loss': 0,
                     'take_profit': 0
                 }
-                self.save_latest_activity(symbol)
+                self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
                 notifikasi_sell(symbol, rounded_quantity, rounded_price, estimasi_profit)
                 notifikasi_balance(self.client)
-            except BinanceAPIException as e:
-                logging.error(f"Error API saat melakukan penjualan {symbol}: {e}")
-            except Exception as e:
-                logging.error(f"Error saat melakukan penjualan {symbol}: {e}")
-        else:
-            logging.info(f"Tidak melakukan penjualan {symbol} karena estimasi profit negatif: {estimasi_profit}")
+            else:
+                logging.info(f"Skipping sell for {symbol} due to negative profit: {estimasi_profit}")
+        except BinanceAPIException as e:
+            logging.error(f"API error during sell {symbol}: {e}")
+        except Exception as e:
+            logging.error(f"Error executing sell {symbol}: {e}")
 
-# Create a bot instance and schedule price checks
-bot = BotTrading()
-schedule.every(30).seconds.do(bot.check_prices)
+    def run(self):
+        """Start the trading bot."""
+        try:
+            schedule.every(30).seconds.do(self.check_prices)
+            while self.running:
+                schedule.run_pending()
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logging.info("Bot stopped by user")
+            self.running = False
+        except Exception as e:
+            logging.error(f"Error in bot main loop: {e}")
+            self.running = False
 
-while bot.running:
-    schedule.run_pending()
-    time.sleep(1)
+    def stop(self):
+        """Stop the trading bot."""
+        self.running = False
