@@ -13,7 +13,7 @@ from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell
 from src.check_price import CryptoPriceChecker
 from requests.exceptions import ConnectionError, Timeout
 
-# Konfigurasi logging
+# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -79,16 +79,16 @@ class BotTrading:
         self.price_checker = CryptoPriceChecker(self.client)
 
     def get_config_hash(self):
-        """Menghitung hash dari konfigurasi bot."""
+        """Generate hash from the bot's configuration."""
         try:
             config_str = f"{settings['API_KEY']}{settings['API_SECRET']}{str(SYMBOLS)}{INTERVAL}"
             return hashlib.md5(config_str.encode()).hexdigest()
         except Exception as e:
-            logging.error(f"Error saat menghitung hash konfigurasi: {e}")
+            logging.error(f"Error generating config hash: {e}")
             return None
 
     def init_symbol_info(self):
-        """Initialize symbol information including precision and minimum notional requirements."""
+        """Initialize symbol information, including precision and minimum notional requirements."""
         try:
             exchange_info = self.client.get_exchange_info()
             for symbol_info in exchange_info['symbols']:
@@ -100,7 +100,7 @@ class BotTrading:
             self.set_default_symbol_info()
 
     def extract_symbol_info(self, symbol_info):
-        """Extract necessary symbol information from exchange info."""
+        """Extract relevant symbol information from exchange info."""
         symbol_specific_info = {
             'quantity_precision': 5,
             'price_precision': 2,
@@ -134,7 +134,7 @@ class BotTrading:
             return symbol_specific_info
 
     def set_default_symbol_info(self):
-        """Set default values for all symbols if initialization fails."""
+        """Set default values for symbols if initialization fails."""
         for symbol in SYMBOLS:
             self.symbol_info[symbol] = {
                 'quantity_precision': 5,
@@ -146,6 +146,7 @@ class BotTrading:
         logging.warning("Using default symbol information due to initialization error")
 
     def get_usdt_balance(self) -> float:
+        """Retrieve available USDT balance."""
         try:
             balance = self.client.get_asset_balance(asset='USDT')
             return float(balance['free'])
@@ -154,6 +155,7 @@ class BotTrading:
             return 0.0
 
     def get_precision_from_step_size(self, step_size: str) -> int:
+        """Calculate precision from step size."""
         try:
             step_size = float(step_size)
             if step_size == 1.0:
@@ -167,7 +169,7 @@ class BotTrading:
             return 8
 
     def has_active_orders(self, symbol: str, side: str) -> bool:
-        """Cek apakah ada order aktif untuk simbol tertentu."""
+        """Check if there are active orders for the symbol."""
         try:
             open_orders = self.client.get_open_orders(symbol=symbol)
             return any(order['side'] == side for order in open_orders)
@@ -176,6 +178,7 @@ class BotTrading:
             return False
 
     def calculate_dynamic_quantity(self, symbol: str, price: float) -> float:
+        """Calculate dynamic order quantity based on available USDT and price."""
         try:
             available_usdt = self.get_usdt_balance()
             logging.info(f"Available USDT balance: {available_usdt}")
@@ -196,29 +199,31 @@ class BotTrading:
             return 0.0
 
     async def check_prices(self):
+        """Check prices and execute orders based on strategy."""
         for symbol in SYMBOLS:
             try:
                 strategy = self.strategies[symbol]
                 latest_activity = self.latest_activities[symbol]
                 action, price = self.price_checker.check_price(symbol, latest_activity)
 
-                # Cek jika action adalah BUY dan belum ada pembelian sebelumnya
+                # Check for BUY action and no previous buy order
                 if action == 'BUY' and not latest_activity['buy'] and not self.has_active_orders(symbol, 'BUY'):
                     quantity = self.calculate_dynamic_quantity(symbol, price)
                     if quantity > 0:
                         await self.execute_buy(symbol, price, quantity, strategy)
 
-                # Cek jika action adalah SELL dan sudah ada pembelian sebelumnya
+                # Check for SELL action and previous buy order
                 elif action == 'SELL' and latest_activity['buy'] and not self.has_active_orders(symbol, 'SELL'):
                     await self.execute_sell(symbol, price, latest_activity)
 
-                # Cek jika harus menjual berdasarkan strategi
+                # Check if strategy indicates it's time to sell
                 if latest_activity['buy'] and strategy.should_sell(price, latest_activity):
                     await self.execute_sell(symbol, price, latest_activity)
             except Exception as e:
                 logging.error(f"Error checking prices for {symbol}: {e}")
 
     async def execute_buy(self, symbol: str, price: float, quantity: float, strategy: PriceActionStrategy):
+        """Execute a BUY order."""
         try:
             rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
             rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
@@ -233,7 +238,7 @@ class BotTrading:
             )
             logging.info(f"Executed BUY for {symbol}: {quantity} at {price}")
 
-            # Save activity and notify
+            # Save activity and send notification
             self.latest_activities[symbol] = {'buy': True, 'sell': False, 'quantity': quantity, 'price': price, 'stop_loss': None, 'take_profit': None}
             self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
 
@@ -244,6 +249,7 @@ class BotTrading:
             logging.error(f"Unexpected error during BUY for {symbol}: {e}")
 
     async def execute_sell(self, symbol: str, price: float, activity):
+        """Execute a SELL order."""
         try:
             quantity = activity['quantity']
             rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
@@ -269,6 +275,7 @@ class BotTrading:
             logging.error(f"Unexpected error during SELL for {symbol}: {e}")
 
     async def run(self):
+        """Run the bot indefinitely."""
         try:
             while self.running:
                 await self.check_prices()
