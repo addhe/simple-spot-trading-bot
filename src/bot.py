@@ -77,6 +77,7 @@ class BotTrading:
         self.symbol_info = {}
         self.init_symbol_info()
         self.price_checker = CryptoPriceChecker(self.client)
+        self.update_symbol_usdt_allocation()
 
     def get_config_hash(self):
         """Menghitung hash dari konfigurasi bot."""
@@ -177,8 +178,8 @@ class BotTrading:
 
     def calculate_dynamic_quantity(self, symbol: str, price: float) -> float:
         try:
-            available_usdt = self.get_usdt_balance()
-            logging.info(f"Available USDT balance: {available_usdt}")
+            available_usdt = self.symbol_usdt_allocation[symbol]
+            logging.info(f"Available USDT balance for {symbol}: {available_usdt}")
 
             raw_quantity = available_usdt / price
             symbol_info = self.symbol_info[symbol]
@@ -194,6 +195,17 @@ class BotTrading:
         except Exception as e:
             logging.error(f"Error calculating quantity for {symbol}: {e}")
             return 0.0
+
+    def update_symbol_usdt_allocation(self):
+        """Update alokasi USDT untuk setiap simbol berdasarkan saldo USDT yang tersedia."""
+        try:
+            total_usdt_balance = self.get_usdt_balance()
+            num_symbols = len(SYMBOLS)
+            allocation_per_symbol = total_usdt_balance / num_symbols
+            self.symbol_usdt_allocation = {symbol: allocation_per_symbol for symbol in SYMBOLS}
+            logging.info(f"Updated USDT allocation per symbol: {self.symbol_usdt_allocation}")
+        except Exception as e:
+            logging.error(f"Error updating USDT allocation: {e}")
 
     async def check_prices(self):
         for symbol in SYMBOLS:
@@ -272,7 +284,8 @@ class BotTrading:
     async def run(self):
         try:
             while self.running:
-                # Periodically check USDT balance
+                # Periodically check USDT balance and update allocation
+                self.update_symbol_usdt_allocation()
                 usdt_balance = self.get_usdt_balance()
                 logging.info(f"Current USDT balance: {usdt_balance}")
                 await asyncio.sleep(60)  # Delay to prevent hitting rate limits
