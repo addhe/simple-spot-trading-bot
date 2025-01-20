@@ -12,6 +12,7 @@ from src.strategy import PriceActionStrategy
 from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell
 from src.check_price import CryptoPriceChecker
 from requests.exceptions import ConnectionError, Timeout
+from config.config import SYMBOLS
 
 # Konfigurasi logging
 logging.basicConfig(
@@ -207,6 +208,29 @@ class BotTrading:
         except Exception as e:
             logging.error(f"Error updating USDT allocation: {e}")
 
+    def get_asset_status(self, symbol: str) -> str:
+        try:
+            asset_info = self.client.get_asset_balance(asset=symbol)
+            return f"Saldo {symbol}: {asset_info['free']}"
+        except Exception as e:
+            logging.error(f"Error getting asset status for {symbol}: {e}")
+            return "Tidak dapat mengambil status aset"
+
+    def get_all_asset_status(self) -> dict:
+        try:
+            asset_status = {}
+            for symbol in SYMBOLS:
+                asset_info = self.client.get_asset_balance(asset=symbol.replace('USDT', ''))
+                if asset_info:
+                    asset_status[symbol] = {
+                        'saldo': float(asset_info['free']),
+                        'terkunci': float(asset_info['locked'])
+                    }
+            return asset_status
+        except Exception as e:
+            logging.error(f"Error getting asset status: {e}")
+            return {}
+
     async def check_prices(self):
         for symbol in SYMBOLS:
             try:
@@ -249,8 +273,9 @@ class BotTrading:
             # Save activity and notify
             self.latest_activities[symbol] = {'buy': True, 'sell': False, 'quantity': quantity, 'price': price, 'stop_loss': None, 'take_profit': None}
             self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
-
-            notifikasi_buy(symbol, quantity, price)
+            usdt_balance = self.get_usdt_balance()
+            asset_status = self.get_all_asset_status()
+            notifikasi_buy(symbol, quantity, price, usdt_balance, asset_status)
         except BinanceAPIException as e:
             logging.error(f"Error executing BUY order for {symbol}: {e}")
         except Exception as e:
@@ -274,8 +299,9 @@ class BotTrading:
             logging.info(f"Executed SELL for {symbol}: {quantity} at {price}")
             self.latest_activities[symbol] = {'buy': False, 'sell': True, 'quantity': 0, 'price': 0, 'stop_loss': None, 'take_profit': None}
             self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
-
-            notifikasi_sell(symbol, activity['quantity'], price)
+            usdt_balance = self.get_usdt_balance()
+            asset_status = self.get_all_asset_status()
+            notifikasi_sell(symbol, activity['quantity'], price, usdt_balance, asset_status)
         except BinanceAPIException as e:
             logging.error(f"Error executing SELL order for {symbol}: {e}")
         except Exception as e:

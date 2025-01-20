@@ -18,17 +18,21 @@ def kirim_notifikasi_telegram(pesan: str) -> None:
     else:
         logging.error('Gagal mengirim notifikasi Telegram')
 
-def notifikasi_buy(symbol: str, quantity: float, price: float) -> None:
+def notifikasi_buy(symbol: str, quantity: float, price: float, usdt_balance: float, asset_status: str) -> None:
     # Menambahkan informasi lebih lengkap pada notifikasi
     pesan = f'📈 *Buy Alert* 📉\n\n' \
-            f'Membeli {symbol} sebanyak {quantity} dengan harga {price} USDT.'
+            f'Membeli {symbol} sebanyak {quantity} dengan harga {price} USDT.\n' \
+            f'Saldo USDT: {usdt_balance:.2f} USDT\n' \
+            f'Status Aset: {asset_status}'
     kirim_notifikasi_telegram(pesan)
 
-def notifikasi_sell(symbol: str, quantity: float, price: float, estimasi_profit: float) -> None:
+def notifikasi_sell(symbol: str, quantity: float, price: float, estimasi_profit: float, usdt_balance: float, asset_status: str) -> None:
     # Menambahkan estimasi profit dengan lebih jelas
     pesan = f'💰 *Sell Alert* 💸\n\n' \
             f'Menjual {symbol} sebanyak {quantity} dengan harga {price} USDT.\n' \
-            f'Estimasi Profit: {estimasi_profit:.2f} USDT'
+            f'Estimasi Profit: {estimasi_profit:.2f} USDT\n' \
+            f'Saldo USDT: {usdt_balance:.2f} USDT\n' \
+            f'Status Aset: {asset_status}'
     kirim_notifikasi_telegram(pesan)
 
 def notifikasi_balance(client) -> None:
