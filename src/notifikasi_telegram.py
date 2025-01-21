@@ -1,12 +1,11 @@
 # src/notifikasi_telegram.py
 import requests
-import os
 import logging
-from config.config import SYMBOLS  # Mengimpor SYMBOLS dari konfigurasi
+from config.settings import settings  # Mengimpor settings dari konfigurasi
 
 def kirim_notifikasi_telegram(pesan: str) -> None:
-    token = os.environ['TELEGRAM_TOKEN']
-    chat_id = os.environ['TELEGRAM_GROUP_ID']
+    token = settings['TELEGRAM_TOKEN']
+    chat_id = settings['TELEGRAM_GROUP_ID']
     url = f'https://api.telegram.org/bot{token}/sendMessage'
     params = {
         'chat_id': chat_id,
@@ -47,7 +46,7 @@ def notifikasi_balance(client) -> None:
             free = float(balance['free'])
             if asset == 'USDT':
                 usdt_balance = free
-            elif asset in [symbol[:-4] for symbol in SYMBOLS]:  # Memeriksa saldo untuk simbol dasar
+            elif asset in [symbol[:-4] for symbol in settings['SYMBOLS']]:  # Memeriksa saldo untuk simbol dasar
                 symbol_balances[asset] = free
 
         # Menyusun pesan notifikasi dengan informasi saldo yang lebih rinci

@@ -10,6 +10,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from src.bot import BotTrading
 from config.settings import settings
+from src.notifikasi_telegram import kirim_notifikasi_telegram  # Import fungsi untuk mengirim pesan Telegram
 
 # Konfigurasi logging yang lebih baik untuk produksi
 logging.basicConfig(
@@ -88,6 +89,7 @@ class ReloadHandler(FileSystemEventHandler):
                 asyncio.create_task(self.bot.run())  # Jalankan bot lagi
         except Exception as e:
             logging.error(f"Error saat memuat ulang bot: {e}")
+            kirim_notifikasi_telegram(f"Error saat memuat ulang bot: {e}")  # Kirim pesan error ke Telegram
         finally:
             self.lock = False
 
@@ -115,6 +117,7 @@ async def main():
         observer.stop()  # Hentikan observer saat ada interrupt (Ctrl+C)
     except Exception as e:
         logging.error(f"Error saat menjalankan bot: {e}")
+        kirim_notifikasi_telegram(f"Error saat menjalankan bot: {e}")  # Kirim pesan error ke Telegram
     finally:
         observer.join()  # Tunggu observer untuk berhenti dengan baik
 
@@ -124,3 +127,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except Exception as e:
         logging.critical(f"Terjadi kesalahan fatal saat menjalankan aplikasi: {e}")
+        kirim_notifikasi_telegram(f"Terjadi kesalahan fatal saat menjalankan aplikasi: {e}")  # Kirim pesan error ke Telegram
