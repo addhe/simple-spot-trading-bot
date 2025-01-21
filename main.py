@@ -1,3 +1,4 @@
+# main.py
 import sys
 import os
 import time
@@ -8,6 +9,7 @@ from dotenv import load_dotenv
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from src.bot import BotTrading
+from config.settings import settings
 
 # Konfigurasi logging yang lebih baik untuk produksi
 logging.basicConfig(
@@ -31,7 +33,7 @@ def check_internet_connection(url='http://www.google.com', timeout=5):
 def check_binance_status():
     """Memeriksa status API Binance."""
     try:
-        response = requests.get('https://api.binance.com/api/v3/ping', timeout=5)
+        response = requests.get(f"{settings['BASE_URL']}/api/v3/ping", timeout=5)
         if response.status_code == 200:
             logging.info("API Binance dalam keadaan baik.")
             return True
@@ -83,7 +85,7 @@ class ReloadHandler(FileSystemEventHandler):
                 logging.info(f"File {event.src_path} dimodifikasi. Memuat ulang bot...")
                 self.bot.stop()  # Hentikan instance bot saat ini
                 self.bot = BotTrading()  # Buat instance bot baru
-                self.bot.run()  # Jalankan bot lagi
+                asyncio.create_task(self.bot.run())  # Jalankan bot lagi
         except Exception as e:
             logging.error(f"Error saat memuat ulang bot: {e}")
         finally:

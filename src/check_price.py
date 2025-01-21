@@ -1,9 +1,11 @@
+# src/check_price.py
 import os
 import time
 import pandas as pd
 import logging
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
+from config.settings import settings
 
 # Konfigurasi logging
 logging.basicConfig(

@@ -12,7 +12,6 @@ from src.strategy import PriceActionStrategy
 from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell
 from src.check_price import CryptoPriceChecker
 from requests.exceptions import ConnectionError, Timeout
-from config.config import SYMBOLS
 
 # Konfigurasi logging
 logging.basicConfig(
@@ -151,7 +150,7 @@ class BotTrading:
         try:
             balance = self.client.get_asset_balance(asset='USDT')
             return float(balance['free'])
-        except Exception as e:
+        except (BinanceAPIException, ConnectionError, Timeout) as e:
             logging.error(f"Error getting USDT balance: {e}")
             return 0.0
 
@@ -173,7 +172,7 @@ class BotTrading:
         try:
             open_orders = self.client.get_open_orders(symbol=symbol)
             return any(order['side'] == side for order in open_orders)
-        except Exception as e:
+        except (BinanceAPIException, ConnectionError, Timeout) as e:
             logging.error(f"Error checking active orders for {symbol}: {e}")
             return False
 
@@ -212,7 +211,7 @@ class BotTrading:
         try:
             asset_info = self.client.get_asset_balance(asset=symbol)
             return f"Saldo {symbol}: {asset_info['free']}"
-        except Exception as e:
+        except (BinanceAPIException, ConnectionError, Timeout) as e:
             logging.error(f"Error getting asset status for {symbol}: {e}")
             return "Tidak dapat mengambil status aset"
 
@@ -227,7 +226,7 @@ class BotTrading:
                         'terkunci': float(asset_info['locked'])
                     }
             return asset_status
-        except Exception as e:
+        except (BinanceAPIException, ConnectionError, Timeout) as e:
             logging.error(f"Error getting asset status: {e}")
             return {}
 
@@ -276,7 +275,7 @@ class BotTrading:
             usdt_balance = self.get_usdt_balance()
             asset_status = self.get_all_asset_status()
             notifikasi_buy(symbol, quantity, price, usdt_balance, asset_status)
-        except BinanceAPIException as e:
+        except (BinanceAPIException, ConnectionError, Timeout) as e:
             logging.error(f"Error executing BUY order for {symbol}: {e}")
         except Exception as e:
             logging.error(f"Unexpected error during BUY for {symbol}: {e}")
@@ -302,7 +301,7 @@ class BotTrading:
             usdt_balance = self.get_usdt_balance()
             asset_status = self.get_all_asset_status()
             notifikasi_sell(symbol, activity['quantity'], price, usdt_balance, asset_status)
-        except BinanceAPIException as e:
+        except (BinanceAPIException, ConnectionError, Timeout) as e:
             logging.error(f"Error executing SELL order for {symbol}: {e}")
         except Exception as e:
             logging.error(f"Unexpected error during SELL for {symbol}: {e}")
@@ -320,6 +319,9 @@ class BotTrading:
 
         except Exception as e:
             logging.error(f"Error during bot execution: {e}")
+
+    def stop(self):
+        self.running = False
 
 if __name__ == "__main__":
     bot = BotTrading()

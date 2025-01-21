@@ -80,7 +80,16 @@ class PriceActionStrategy:
                 ]
             )
             historical_data['timestamp'] = pd.to_datetime(historical_data['timestamp'], unit='ms')
+            historical_data['open'] = historical_data['open'].astype(float)
+            historical_data['high'] = historical_data['high'].astype(float)
+            historical_data['low'] = historical_data['low'].astype(float)
             historical_data['close'] = historical_data['close'].astype(float)
+            historical_data['volume'] = historical_data['volume'].astype(float)
+            historical_data['close_time'] = pd.to_datetime(historical_data['close_time'], unit='ms')
+            historical_data['quote_asset_volume'] = historical_data['quote_asset_volume'].astype(float)
+            historical_data['number_of_trades'] = historical_data['number_of_trades'].astype(int)
+            historical_data['taker_buy_base_asset_volume'] = historical_data['taker_buy_base_asset_volume'].astype(float)
+            historical_data['taker_buy_quote_asset_volume'] = historical_data['taker_buy_quote_asset_volume'].astype(float)
 
             self.save_to_cache(historical_data)
             return historical_data
@@ -146,7 +155,12 @@ class PriceActionStrategy:
             logging.error(f"Error calculating ATR for {self.symbol}: {e}")
             return 0
 
-# Usage example in main.py
-# strategy = PriceActionStrategy(symbol='BTCUSDT', use_testnet=True)
-# buy_price = strategy.calculate_dynamic_buy_price()
-# sell_price = strategy.calculate_dynamic_sell_price()
+    def should_sell(self, current_price: float, activity: dict) -> bool:
+        """Determine if it's time to sell based on current price and activity."""
+        try:
+            buy_price = activity['price']
+            sell_price = self.calculate_dynamic_sell_price()
+            return current_price >= sell_price
+        except Exception as e:
+            logging.error(f"Error determining if should sell for {self.symbol}: {e}")
+            return False
