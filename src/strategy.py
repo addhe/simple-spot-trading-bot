@@ -1,166 +1,254 @@
 # src/strategy.py
-import pandas as pd
-import numpy as np
+import asyncio
 import logging
-import os
-import time
-import pickle
-from binance.client import Client
-from config.settings import settings
-from retrying import retry
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
+from decimal import Decimal
+from typing import Dict, Optional, List, Type, AsyncGenerator
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import pandas as pd
+from async_lru import alru_cache
+from pydantic import BaseModel, Field, ValidationError
+from pytz import UTC
 
-class PriceActionStrategy:
-    def __init__(self, symbol: str, use_testnet=False):
+from config.settings import AppSettings
+from src.market_data import MarketData
+from src.utils import (
+    async_retry,
+    error_handler,
+    financial_precision,
+    truncate_to_step,
+    validate_timestamp
+)
+from src.telegram_notifier import TelegramNotifier
+
+logger = logging.getLogger(__name__)
+
+class StrategyConfig(BaseModel):
+    """Base configuration model for strategies"""
+    name: str
+    version: str = "1.0.0"
+    enabled: bool = True
+    risk_multiplier: float = Field(1.0, ge=0.5, le=3.0)
+    max_retries: int = Field(3, ge=1, le=10)
+
+class StrategyResult(BaseModel):
+    """Standardized strategy decision output"""
+    signal: str  # buy | sell | hold
+    confidence: float
+    parameters: dict
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+class TradingStrategy(ABC):
+    """Abstract base class for all trading strategies"""
+    
+    def __init__(
+        self,
+        symbol: str,
+        market_data: MarketData,
+        config: StrategyConfig
+    ):
         self.symbol = symbol
-        self.use_testnet = use_testnet
-        self.client = self._initialize_binance_client()
-        self.cache_file = f"cache_{self.symbol}.pkl"  # Cache file name
-        self.data = pd.DataFrame()
+        self.market_data = market_data
+        self.config = config
+        self._last_calculated: Optional[datetime] = None
 
-    def _initialize_binance_client(self):
-        """Initialize Binance client with API keys."""
-        try:
-            api_url = 'https://testnet.binance.vision/api' if self.use_testnet else 'https://api.binance.com/api'
-            client = Client(settings['API_KEY'], settings['API_SECRET'])
-            client.API_URL = api_url
-            logging.info(f"Binance client initialized for symbol {self.symbol}. Testnet: {self.use_testnet}")
-            return client
-        except Exception as e:
-            logging.error(f"Error initializing Binance client: {e}")
-            raise
+    @abstractmethod
+    async def analyze(self) -> StrategyResult:
+        """Main analysis method returning strategy decision"""
+        pass
 
-    def load_cached_data(self):
-        """Try to load cached data for optimization, only valid for 5 minutes."""
-        try:
-            if os.path.exists(self.cache_file):
-                with open(self.cache_file, 'rb') as f:
-                    cached_data = pickle.load(f)
-                    if time.time() - cached_data['timestamp'] < 300:  # Cache valid for 5 minutes
-                        logging.info("Loaded data from cache.")
-                        return cached_data['data']
-            return None
-        except Exception as e:
-            logging.error(f"Error loading cached data: {e}")
-            return None
+    @abstractmethod
+    async def calculate_risk_parameters(
+        self, 
+        price: Decimal
+    ) -> Dict[str, Decimal]:
+        """Calculate SL/TP and other risk parameters"""
+        pass
 
-    def save_to_cache(self, data):
-        """Save data to cache."""
-        try:
-            with open(self.cache_file, 'wb') as f:
-                pickle.dump({'timestamp': time.time(), 'data': data}, f)
-            logging.info("Data saved to cache.")
-        except Exception as e:
-            logging.error(f"Error saving to cache: {e}")
-
-    @retry(stop_max_attempt_number=5, wait_fixed=2000)
-    def get_historical_data(self, cache=True) -> pd.DataFrame:
-        """Fetch historical data with optional caching."""
-        try:
-            if cache:
-                cached_data = self.load_cached_data()
-                if cached_data is not None:
-                    return cached_data
-
-            klines = self.client.get_historical_klines(
-                self.symbol,
-                '1m',  # Interval 1 minute
-                '1 day ago UTC'  # Data for the last 24 hours
-            )
-
-            historical_data = pd.DataFrame(
-                klines,
-                columns=[
-                    'timestamp', 'open', 'high', 'low', 'close',
-                    'volume', 'close_time', 'quote_asset_volume',
-                    'number_of_trades', 'taker_buy_base_asset_volume',
-                    'taker_buy_quote_asset_volume', 'ignore'
-                ]
-            )
-            historical_data['timestamp'] = pd.to_datetime(historical_data['timestamp'], unit='ms')
-            historical_data['open'] = historical_data['open'].astype(float)
-            historical_data['high'] = historical_data['high'].astype(float)
-            historical_data['low'] = historical_data['low'].astype(float)
-            historical_data['close'] = historical_data['close'].astype(float)
-            historical_data['volume'] = historical_data['volume'].astype(float)
-            historical_data['close_time'] = pd.to_datetime(historical_data['close_time'], unit='ms')
-            historical_data['quote_asset_volume'] = historical_data['quote_asset_volume'].astype(float)
-            historical_data['number_of_trades'] = historical_data['number_of_trades'].astype(int)
-            historical_data['taker_buy_base_asset_volume'] = historical_data['taker_buy_base_asset_volume'].astype(float)
-            historical_data['taker_buy_quote_asset_volume'] = historical_data['taker_buy_quote_asset_volume'].astype(float)
-
-            self.save_to_cache(historical_data)
-            return historical_data
-        except Exception as e:
-            logging.error(f"Error getting historical data for {self.symbol}: {e}")
-            return pd.DataFrame()
-
-    def calculate_dynamic_buy_price(self) -> float:
-        """Calculate dynamic buy price based on market volatility (ATR)."""
-        try:
-            historical_data = self.get_historical_data()
-            if historical_data.empty:
-                logging.warning(f"No historical data for {self.symbol}. Using default buy price.")
-                return 10000  # Default if no historical data
-
-            prices = historical_data['close'].values
-            moving_average = prices[-10:].mean()  # Last 10 closing prices
-            atr = self.calculate_atr(historical_data)
-
-            if atr == 0:
-                logging.warning(f"ATR for {self.symbol} is 0, using default multiplier.")
-                return moving_average * 0.95  # Dynamic buy price, 5% below moving average
-
-            dynamic_buy_price = moving_average * (1 - (0.05 + atr * 0.02))  # 5% minus volatility
-            return dynamic_buy_price
-        except Exception as e:
-            logging.error(f"Error calculating dynamic buy price for {self.symbol}: {e}")
-            return 10000
-
-    def calculate_dynamic_sell_price(self) -> float:
-        """Calculate dynamic sell price based on market volatility (ATR)."""
-        try:
-            historical_data = self.get_historical_data()
-            if historical_data.empty:
-                logging.warning(f"No historical data for {self.symbol}. Using default sell price.")
-                return 9000  # Default if no historical data
-
-            prices = historical_data['close'].values
-            moving_average = prices[-10:].mean()  # Last 10 closing prices
-            atr = self.calculate_atr(historical_data)
-
-            if atr == 0:
-                logging.warning(f"ATR for {self.symbol} is 0, using default multiplier.")
-                return moving_average * 1.05  # Dynamic sell price, 5% above moving average
-
-            dynamic_sell_price = moving_average * (1 + (0.05 + atr * 0.02))  # 5% plus volatility
-            return dynamic_sell_price
-        except Exception as e:
-            logging.error(f"Error calculating dynamic sell price for {self.symbol}: {e}")
-            return 9000
-
-    def calculate_atr(self, historical_data: pd.DataFrame) -> float:
-        """Calculate Average True Range (ATR) for market volatility."""
-        try:
-            high_low = historical_data['high'] - historical_data['low']
-            high_close = abs(historical_data['high'] - historical_data['close'].shift())
-            low_close = abs(historical_data['low'] - historical_data['close'].shift())
-            ranges = pd.concat([high_low, high_close, low_close], axis=1)
-            true_range = ranges.max(axis=1)
-            atr = true_range.rolling(window=14).mean().iloc[-1]
-            return atr
-        except Exception as e:
-            logging.error(f"Error calculating ATR for {self.symbol}: {e}")
-            return 0
-
-    def should_sell(self, current_price: float, activity: dict) -> bool:
-        """Determine if it's time to sell based on current price and activity."""
-        try:
-            buy_price = activity['price']
-            sell_price = self.calculate_dynamic_sell_price()
-            return current_price >= sell_price
-        except Exception as e:
-            logging.error(f"Error determining if should sell for {self.symbol}: {e}")
+    async def is_fresh(self) -> bool:
+        """Check if analysis is recent enough"""
+        if not self._last_calculated:
             return False
+        return (datetime.now(UTC) - self._last_calculated) < timedelta(minutes=1)
+
+class PriceActionConfig(StrategyConfig):
+    """Configuration for Price Action strategy"""
+    atr_period: int = Field(14, ge=5, le=50)
+    ma_period: int = Field(10, ge=5, le=200)
+    base_offset: float = Field(0.05, ge=0.01, le=0.1)
+    volatility_multiplier: float = Field(0.02, ge=0.01, le=0.1)
+
+class PriceActionStrategy(TradingStrategy):
+    """Volatility-adjusted price action strategy"""
+    
+    def __init__(
+        self,
+        symbol: str,
+        market_data: MarketData,
+        config: PriceActionConfig
+    ):
+        super().__init__(symbol, market_data, config)
+        self._cache = {}
+
+    @alru_cache(maxsize=10, ttl=300)
+    @async_retry(max_retries=3)
+    @error_handler(notify=True)
+    async def get_historical_data(self) -> pd.DataFrame:
+        """Get historical data with caching"""
+        df = await self.market_data.get_historical_data(
+            self.symbol,
+            days=7,
+            interval='1h'
+        )
+        return self._process_data(df)
+
+    def _process_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Process raw market data"""
+        required_cols = ['timestamp', 'open', 'high', 'low', 'close']
+        if not all(col in df.columns for col in required_cols):
+            raise ValueError("Missing required columns in historical data")
+
+        df = df[required_cols].copy()
+        df['returns'] = df['close'].pct_change()
+        return df.dropna()
+
+    async def calculate_volatility(self) -> Decimal:
+        """Calculate normalized volatility using ATR"""
+        df = await self.get_historical_data()
+        if df.empty:
+            return Decimal(0)
+
+        high_low = df['high'] - df['low']
+        high_close = (df['high'] - df['close'].shift()).abs()
+        low_close = (df['low'] - df['close'].shift()).abs()
+        
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        atr = true_range.rolling(self.config.atr_period).mean().iloc[-1]
+        return financial_precision(atr)
+
+    async def calculate_moving_average(self) -> Decimal:
+        """Calculate simple moving average"""
+        df = await self.get_historical_data()
+        if df.empty:
+            return Decimal(0)
+
+        ma = df['close'].rolling(self.config.ma_period).mean().iloc[-1]
+        return financial_precision(ma)
+
+    @error_handler()
+    async def analyze(self) -> StrategyResult:
+        """Generate trading signal based on price analysis"""
+        current_price = await self.market_data.get_current_price(self.symbol)
+        ma = await self.calculate_moving_average()
+        volatility = await self.calculate_volatility()
+
+        # Calculate dynamic thresholds
+        buy_threshold = ma * (1 - (
+            self.config.base_offset + 
+            volatility * self.config.volatility_multiplier
+        ))
+        
+        sell_threshold = ma * (1 + (
+            self.config.base_offset + 
+            volatility * self.config.volatility_multiplier
+        ))
+
+        # Generate signal
+        if current_price <= buy_threshold:
+            signal = 'buy'
+            confidence = float((buy_threshold - current_price) / buy_threshold)
+        elif current_price >= sell_threshold:
+            signal = 'sell'
+            confidence = float((current_price - sell_threshold) / sell_threshold)
+        else:
+            signal = 'hold'
+            confidence = 0.0
+
+        self._last_calculated = datetime.now(UTC)
+        return StrategyResult(
+            signal=signal,
+            confidence=confidence,
+            parameters={
+                'ma': ma,
+                'volatility': volatility,
+                'buy_threshold': buy_threshold,
+                'sell_threshold': sell_threshold
+            }
+        )
+
+    async def calculate_risk_parameters(
+        self, 
+        price: Decimal
+    ) -> Dict[str, Decimal]:
+        """Calculate risk management parameters"""
+        volatility = await self.calculate_volatility()
+        ma = await self.calculate_moving_average()
+
+        stop_loss = price * (1 - (
+            self.config.base_offset + 
+            volatility * self.config.risk_multiplier
+        ))
+        
+        take_profit = price * (1 + (
+            self.config.base_offset + 
+            volatility * self.config.risk_multiplier * 1.5
+        ))
+
+        return {
+            'stop_loss': truncate_to_step(
+                stop_loss,
+                await self.market_data.get_tick_size(self.symbol)
+            ),
+            'take_profit': truncate_to_step(
+                take_profit,
+                await self.market_data.get_tick_size(self.symbol)
+            )
+        }
+
+class MovingAverageConfig(StrategyConfig):
+    """Configuration for Moving Average Crossover strategy"""
+    fast_period: int = Field(50, ge=10, le=100)
+    slow_period: int = Field(200, ge=100, le=500)
+    trend_threshold: float = Field(0.005, ge=0.001, le=0.01)
+
+class MovingAverageStrategy(TradingStrategy):
+    """Moving Average Crossover strategy implementation"""
+    
+    async def analyze(self) -> StrategyResult:
+        """Implement MA crossover logic"""
+        # Implementation example
+        return StrategyResult(
+            signal='hold',
+            confidence=0.0,
+            parameters={}
+        )
+
+class StrategyFactory:
+    """Factory for creating strategy instances with dependency injection"""
+    
+    _registry = {
+        'price_action': (PriceActionStrategy, PriceActionConfig),
+        'moving_average': (MovingAverageStrategy, MovingAverageConfig)
+    }
+
+    @classmethod
+    def create(
+        cls,
+        strategy_type: str,
+        symbol: str,
+        market_data: MarketData,
+        config: dict
+    ) -> TradingStrategy:
+        """Create strategy instance with validated config"""
+        if strategy_type not in cls._registry:
+            raise ValueError(f"Unsupported strategy type: {strategy_type}")
+
+        strategy_class, config_class = cls._registry[strategy_type]
+        validated_config = config_class(**config)
+        return strategy_class(symbol, market_data, validated_config)
+
+    @classmethod
+    def list_available_strategies(cls) -> List[str]:
+        """Get list of registered strategy types"""
+        return list(cls._registry.keys())

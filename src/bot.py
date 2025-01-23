@@ -1,328 +1,350 @@
 # src/bot.py
-import os
-import hashlib
-import logging
-import sqlite3
 import asyncio
-from binance.client import Client
+import logging
+from decimal import Decimal
+from typing import Dict, Optional, List
+
+from aiohttp import ClientSession
+from binance import AsyncClient, BinanceSocketManager
 from binance.exceptions import BinanceAPIException
-from config.settings import settings
-from config.config import SYMBOLS, INTERVAL
-from src.strategy import PriceActionStrategy
-from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell
-from src.check_price import CryptoPriceChecker
-from requests.exceptions import ConnectionError, Timeout
 
-# Konfigurasi logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
+from config.settings import AppSettings
+from src.strategy import TradingStrategy, StrategyFactory
+from src.telegram_notifier import TelegramNotifier
+from src.storage import DataStorage
+from src.market_data import MarketData
+from src.utils import (
+    async_retry,
+    format_currency,
+    truncate_decimal,
+    async_error_handler  # Impor yang diperbaiki
 )
+from src.models import OrderActivity
 
-class DataStorage:
-    def __init__(self, db_path='bot_trading.db'):
-        self.conn = sqlite3.connect(db_path)
-        self.create_tables()
+logger = logging.getLogger(__name__)
 
-    def create_tables(self):
-        cursor = self.conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS latest_activity (
-            symbol TEXT PRIMARY KEY,
-            buy INTEGER,
-            sell INTEGER,
-            quantity REAL,
-            price REAL,
-            stop_loss REAL,
-            take_profit REAL
-        )''')
-        self.conn.commit()
+class OrderExecutor:
+    """Handles order execution with validation and retry logic"""
+    
+    def __init__(self, exchange, storage, notifier):
+        self.exchange = exchange
+        self.storage = storage
+        self.notifier = notifier
+        self.pending_orders: Dict[str, OrderActivity] = {}
 
-    def save_latest_activity(self, symbol, activity):
-        cursor = self.conn.cursor()
-        cursor.execute('''REPLACE INTO latest_activity
-                          (symbol, buy, sell, quantity, price, stop_loss, take_profit)
-                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                       (symbol, activity['buy'], activity['sell'], activity['quantity'],
-                        activity['price'], activity['stop_loss'], activity['take_profit']))
-        self.conn.commit()
+    @async_error_handler("Order execution failed", notify=True)
+    @async_retry(max_retries=3, initial_delay=1.0)
+    async def execute_order(self, order: OrderActivity):
+        """Execute and track an order with full validation"""
+        if order.symbol in self.pending_orders:
+            logger.warning(f"Active order exists for {order.symbol}, skipping")
+            return
 
-    def load_latest_activity(self, symbol):
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM latest_activity WHERE symbol = ?', (symbol,))
-        row = cursor.fetchone()
-        if row:
-            return {
-                'buy': bool(row[1]),
-                'sell': bool(row[2]),
-                'quantity': row[3],
-                'price': row[4],
-                'stop_loss': row[5],
-                'take_profit': row[6],
-            }
-        return {'buy': False, 'sell': False, 'quantity': 0, 'price': 0, 'stop_loss': 0, 'take_profit': 0}
-
-class BotTrading:
-    def __init__(self):
-        self.client = Client(settings['API_KEY'], settings['API_SECRET'])
-        self.client.API_URL = settings['BASE_URL']
-        self.strategies = {symbol: PriceActionStrategy(symbol) for symbol in SYMBOLS}
-        self.storage = DataStorage()
-        self.latest_activities = {symbol: self.storage.load_latest_activity(symbol) for symbol in SYMBOLS}
-        self.config_hash = self.get_config_hash()
-        self.running = True
-        self.symbol_info = {}
-        self.init_symbol_info()
-        self.price_checker = CryptoPriceChecker(self.client)
-        self.update_symbol_usdt_allocation()
-
-    def get_config_hash(self):
-        """Menghitung hash dari konfigurasi bot."""
+        self.pending_orders[order.symbol] = order
+        
         try:
-            config_str = f"{settings['API_KEY']}{settings['API_SECRET']}{str(SYMBOLS)}{INTERVAL}"
-            return hashlib.md5(config_str.encode()).hexdigest()
-        except Exception as e:
-            logging.error(f"Error saat menghitung hash konfigurasi: {e}")
-            return None
+            await self._validate_order(order)
+            result = await self.exchange.create_order(order)
+            await self.storage.save_activity(order)
+            await self._send_order_notification(order, "executed")
+            return result
+        except BinanceAPIException as e:
+            await self._handle_exchange_error(e, order)
+            raise
+        finally:
+            self.pending_orders.pop(order.symbol, None)
 
-    def init_symbol_info(self):
-        """Initialize symbol information including precision and minimum notional requirements."""
-        try:
-            exchange_info = self.client.get_exchange_info()
-            for symbol_info in exchange_info['symbols']:
-                if symbol_info['symbol'] in SYMBOLS:
-                    self.symbol_info[symbol_info['symbol']] = self.extract_symbol_info(symbol_info)
-                    logging.info(f"Initialized {symbol_info['symbol']} info: {self.symbol_info[symbol_info['symbol']]}")
-        except Exception as e:
-            logging.error(f"Error initializing symbol info: {str(e)}")
-            self.set_default_symbol_info()
+    async def _validate_order(self, order: OrderActivity):
+        """Comprehensive order validation"""
+        # Balance validation
+        base_asset = order.symbol.replace('USDT', '')
+        balance = await self.exchange.get_balance(
+            'USDT' if order.side == 'BUY' else base_asset
+        )
+        required = order.quantity * order.price if order.side == 'BUY' else order.quantity
+        
+        if balance < required:
+            raise ValueError(
+                f"Insufficient balance. Required: {required:.4f}, Available: {balance:.4f}"
+            )
 
-    def extract_symbol_info(self, symbol_info):
-        """Extract necessary symbol information from exchange info."""
-        symbol_specific_info = {
-            'quantity_precision': 5,
-            'price_precision': 2,
-            'min_quantity': 0.00001,
-            'max_quantity': 9999999,
-            'min_notional': 10.0
+        # Exchange limits validation
+        symbol_info = self.exchange.symbol_info_cache[order.symbol]
+        if not (symbol_info['min_quantity'] <= order.quantity <= symbol_info['max_quantity']):
+            raise ValueError(
+                f"Quantity {order.quantity:.6f} out of allowed range "
+                f"({symbol_info['min_quantity']:.6f}-{symbol_info['max_quantity']:.6f})"
+            )
+
+        # Notional value check
+        notional = order.quantity * order.price
+        if notional < symbol_info['min_notional']:
+            raise ValueError(
+                f"Notional value {notional:.2f} below minimum {symbol_info['min_notional']:.2f}"
+            )
+
+    async def _send_order_notification(self, order: OrderActivity, status: str):
+        """Send detailed order notification"""
+        message = (
+            f"📊 Order {status.upper()} - {order.symbol}\n"
+            f"• Side: {order.side}\n"
+            f"• Quantity: {order.quantity:.6f}\n"
+            f"• Price: {format_currency(order.price)}\n"
+            f"• Stop Loss: {format_currency(order.stop_loss) if order.stop_loss else 'N/A'}\n"
+            f"• Take Profit: {format_currency(order.take_profit) if order.take_profit else 'N/A'}"
+        )
+        await self.notifier.send_alert(message)
+
+    async def _handle_exchange_error(self, error: BinanceAPIException, order: OrderActivity):
+        """Handle exchange API errors"""
+        error_msg = (
+            f"🚨 Exchange Error ({order.symbol})\n"
+            f"Code: {error.code}\n"
+            f"Message: {error.message}"
+        )
+        logger.error(error_msg)
+        await self.notifier.send_alert(error_msg)
+
+class PortfolioManager:
+    """Manages portfolio allocations and risk calculations"""
+    
+    def __init__(self, exchange, settings: AppSettings):
+        self.exchange = exchange
+        self.settings = settings
+        self.allocations: Dict[str, Decimal] = {}
+
+    async def update_allocations(self):
+        """Update portfolio allocations based on current balance"""
+        total_balance = await self.exchange.get_balance('USDT')
+        risk_adjusted_balance = total_balance * (1 - self.settings.risk_reserve)
+        per_pair_allocation = risk_adjusted_balance / len(self.settings.trading_pairs)
+        
+        self.allocations = {
+            pair: truncate_decimal(per_pair_allocation, 2)
+            for pair in self.settings.trading_pairs
         }
+        logger.info(f"Updated allocations: {self.allocations}")
 
+    async def calculate_position_size(self, pair: str, price: Decimal) -> Decimal:
+        """Calculate optimal position size with risk management"""
+        allocation = self.allocations.get(pair, Decimal(0))
+        if allocation <= 0:
+            return Decimal(0)
+
+        symbol_info = self.exchange.symbol_info_cache[pair]
+        raw_quantity = allocation / price
+        quantity = truncate_decimal(raw_quantity, symbol_info['quantity_precision'])
+        
+        # Ensure quantity meets exchange requirements
+        quantity = max(Decimal(symbol_info['min_quantity']), quantity)
+        quantity = min(Decimal(symbol_info['max_quantity']), quantity)
+        
+        # Final notional check
+        notional = quantity * price
+        if notional < symbol_info['min_notional']:
+            return Decimal(0)
+
+        return quantity
+
+class TradingBot:
+    """Main trading bot class orchestrating all components"""
+    
+    def __init__(self, settings: AppSettings):
+        self.settings = settings
+        self.exchange = BinanceExchangeClient(settings)
+        self.storage = DataStorage(settings)
+        self.notifier = TelegramNotifier()
+        self.market_data = MarketData(self.exchange)
+        self.strategies: Dict[str, TradingStrategy] = {}
+        self.portfolio = PortfolioManager(self.exchange, settings)
+        self.order_executor = OrderExecutor(
+            self.exchange, 
+            self.storage, 
+            self.notifier
+        )
+        self.running = True
+
+    async def initialize(self):
+        """Initialize all components with proper error handling"""
         try:
-            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-            price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
-            min_notional_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), None)
-
-            if lot_size_filter:
-                symbol_specific_info.update({
-                    'quantity_precision': self.get_precision_from_step_size(lot_size_filter['stepSize']),
-                    'min_quantity': float(lot_size_filter['minQty']),
-                    'max_quantity': float(lot_size_filter['maxQty'])
-                })
-
-            if price_filter:
-                symbol_specific_info['price_precision'] = self.get_precision_from_step_size(price_filter['tickSize'])
-
-            if min_notional_filter:
-                symbol_specific_info['min_notional'] = float(min_notional_filter['minNotional'])
-
-            return symbol_specific_info
-
+            await self.exchange.initialize()
+            await self._load_strategies()
+            await self._restore_state()
+            await self.portfolio.update_allocations()
+            logger.info("✅ Bot initialization complete")
         except Exception as e:
-            logging.warning(f"Error processing filters for {symbol_info['symbol']}, using default values: {str(e)}")
-            return symbol_specific_info
+            await self._handle_initialization_error(e)
+            raise
 
-    def set_default_symbol_info(self):
-        """Set default values for all symbols if initialization fails."""
-        for symbol in SYMBOLS:
-            self.symbol_info[symbol] = {
-                'quantity_precision': 5,
-                'price_precision': 2,
-                'min_quantity': 0.00001,
-                'max_quantity': 9999999,
-                'min_notional': 10.0
-            }
-        logging.warning("Using default symbol information due to initialization error")
-
-    def get_usdt_balance(self) -> float:
-        try:
-            balance = self.client.get_asset_balance(asset='USDT')
-            return float(balance['free'])
-        except (BinanceAPIException, ConnectionError, Timeout) as e:
-            logging.error(f"Error getting USDT balance: {e}")
-            return 0.0
-
-    def get_precision_from_step_size(self, step_size: str) -> int:
-        try:
-            step_size = float(step_size)
-            if step_size == 1.0:
-                return 0
-            decimal_str = str(step_size).rstrip('0')
-            if '.' in decimal_str:
-                return len(decimal_str.split('.')[-1])
-            return 0
-        except Exception as e:
-            logging.error(f"Error calculating precision from step size {step_size}: {str(e)}")
-            return 8
-
-    def has_active_orders(self, symbol: str, side: str) -> bool:
-        """Cek apakah ada order aktif untuk simbol tertentu."""
-        try:
-            open_orders = self.client.get_open_orders(symbol=symbol)
-            return any(order['side'] == side for order in open_orders)
-        except (BinanceAPIException, ConnectionError, Timeout) as e:
-            logging.error(f"Error checking active orders for {symbol}: {e}")
-            return False
-
-    def calculate_dynamic_quantity(self, symbol: str, price: float) -> float:
-        try:
-            available_usdt = self.symbol_usdt_allocation[symbol]
-            logging.info(f"Available USDT balance for {symbol}: {available_usdt}")
-
-            raw_quantity = available_usdt / price
-            symbol_info = self.symbol_info[symbol]
-
-            quantity = round(raw_quantity, symbol_info['quantity_precision'])
-            quantity = max(symbol_info['min_quantity'], min(quantity, symbol_info['max_quantity']))
-
-            if quantity * price < symbol_info['min_notional']:
-                logging.warning(f"Order value below minimum notional ({symbol_info['min_notional']})")
-                return 0.0
-
-            return quantity
-        except Exception as e:
-            logging.error(f"Error calculating quantity for {symbol}: {e}")
-            return 0.0
-
-    def update_symbol_usdt_allocation(self):
-        """Update alokasi USDT untuk setiap simbol berdasarkan saldo USDT yang tersedia."""
-        try:
-            total_usdt_balance = self.get_usdt_balance()
-            num_symbols = len(SYMBOLS)
-            allocation_per_symbol = total_usdt_balance / num_symbols
-            self.symbol_usdt_allocation = {symbol: allocation_per_symbol for symbol in SYMBOLS}
-            logging.info(f"Updated USDT allocation per symbol: {self.symbol_usdt_allocation}")
-        except Exception as e:
-            logging.error(f"Error updating USDT allocation: {e}")
-
-    def get_asset_status(self, symbol: str) -> str:
-        try:
-            asset_info = self.client.get_asset_balance(asset=symbol)
-            return f"Saldo {symbol}: {asset_info['free']}"
-        except (BinanceAPIException, ConnectionError, Timeout) as e:
-            logging.error(f"Error getting asset status for {symbol}: {e}")
-            return "Tidak dapat mengambil status aset"
-
-    def get_all_asset_status(self) -> dict:
-        try:
-            asset_status = {}
-            for symbol in SYMBOLS:
-                asset_info = self.client.get_asset_balance(asset=symbol.replace('USDT', ''))
-                if asset_info:
-                    asset_status[symbol] = {
-                        'saldo': float(asset_info['free']),
-                        'terkunci': float(asset_info['locked'])
-                    }
-            return asset_status
-        except (BinanceAPIException, ConnectionError, Timeout) as e:
-            logging.error(f"Error getting asset status: {e}")
-            return {}
-
-    async def check_prices(self):
-        for symbol in SYMBOLS:
-            try:
-                strategy = self.strategies[symbol]
-                latest_activity = self.latest_activities[symbol]
-                action, price = self.price_checker.check_price(symbol, latest_activity)
-
-                # Cek jika action adalah BUY dan belum ada pembelian sebelumnya
-                if action == 'BUY' and not latest_activity['buy'] and not self.has_active_orders(symbol, 'BUY'):
-                    quantity = self.calculate_dynamic_quantity(symbol, price)
-                    if quantity > 0:
-                        await self.execute_buy(symbol, price, quantity, strategy)
-
-                # Cek jika action adalah SELL dan sudah ada pembelian sebelumnya
-                elif action == 'SELL' and latest_activity['buy'] and not self.has_active_orders(symbol, 'SELL'):
-                    await self.execute_sell(symbol, price, latest_activity)
-
-                # Cek jika harus menjual berdasarkan strategi
-                if latest_activity['buy'] and strategy.should_sell(price, latest_activity):
-                    await self.execute_sell(symbol, price, latest_activity)
-
-            except Exception as e:
-                logging.error(f"Error checking prices for {symbol}: {e}")
-
-    async def execute_buy(self, symbol: str, price: float, quantity: float, strategy: PriceActionStrategy):
-        try:
-            rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
-            rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
-
-            order = self.client.create_order(
-                symbol=symbol,
-                side='BUY',
-                type='LIMIT',
-                quantity=rounded_quantity,
-                price=rounded_price,
-                timeInForce='GTC'
-            )
-            logging.info(f"Executed BUY for {symbol}: {quantity} at {price}")
-
-            # Save activity and notify
-            self.latest_activities[symbol] = {'buy': True, 'sell': False, 'quantity': quantity, 'price': price, 'stop_loss': None, 'take_profit': None}
-            self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
-            usdt_balance = self.get_usdt_balance()
-            asset_status = self.get_all_asset_status()
-            notifikasi_buy(symbol, quantity, price, usdt_balance, asset_status)
-        except (BinanceAPIException, ConnectionError, Timeout) as e:
-            logging.error(f"Error executing BUY order for {symbol}: {e}")
-        except Exception as e:
-            logging.error(f"Unexpected error during BUY for {symbol}: {e}")
-
-    async def execute_sell(self, symbol: str, price: float, activity):
-        try:
-            quantity = activity['quantity']
-            rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
-            rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
-
-            order = self.client.create_order(
-                symbol=symbol,
-                side='SELL',
-                type='LIMIT',
-                quantity=rounded_quantity,
-                price=rounded_price,
-                timeInForce='GTC'
+    async def _load_strategies(self):
+        """Initialize trading strategies dynamically"""
+        for pair in self.settings.trading_pairs:
+            self.strategies[pair] = StrategyFactory.create(
+                self.settings.strategy_type,
+                pair,
+                self.market_data,
+                self.settings.strategy_params
             )
 
-            logging.info(f"Executed SELL for {symbol}: {quantity} at {price}")
-            self.latest_activities[symbol] = {'buy': False, 'sell': True, 'quantity': 0, 'price': 0, 'stop_loss': None, 'take_profit': None}
-            self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
-            usdt_balance = self.get_usdt_balance()
-            asset_status = self.get_all_asset_status()
-            notifikasi_sell(symbol, activity['quantity'], price, usdt_balance, asset_status)
-        except (BinanceAPIException, ConnectionError, Timeout) as e:
-            logging.error(f"Error executing SELL order for {symbol}: {e}")
+    async def _restore_state(self):
+        """Restore previous state from persistent storage"""
+        try:
+            state = await self.storage.load_bot_state()
+            for activity in state.get('activities', []):
+                await self.order_executor.execute_order(activity)
         except Exception as e:
-            logging.error(f"Unexpected error during SELL for {symbol}: {e}")
+            logger.error(f"State restoration failed: {e}")
+            await self.notifier.notify_error(e, "state-restoration")
 
     async def run(self):
-        try:
+        """Main trading loop with health monitoring"""
+        logger.info("🚀 Starting trading operations")
+        async with ClientSession() as session:
             while self.running:
-                # Periodically check USDT balance and update allocation
-                self.update_symbol_usdt_allocation()
-                usdt_balance = self.get_usdt_balance()
-                logging.info(f"Current USDT balance: {usdt_balance}")
-                await asyncio.sleep(60)  # Delay to prevent hitting rate limits
+                try:
+                    await self._execute_trading_cycle(session)
+                    await asyncio.sleep(self._get_interval_seconds())
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    await self._handle_trading_error(e)
 
-                await self.check_prices()
+    def _get_interval_seconds(self) -> int:
+        """Convert trading interval to seconds"""
+        intervals = {'1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400}
+        return intervals[self.settings.trading_interval]
+
+    async def _execute_trading_cycle(self, session: ClientSession):
+        """Execute complete trading cycle"""
+        await self.portfolio.update_allocations()
+        tasks = [
+            self._process_pair(pair, session)
+            for pair in self.settings.trading_pairs
+        ]
+        await asyncio.gather(*tasks)
+
+    async def _process_pair(self, pair: str, session: ClientSession):
+        """Process trading logic for a single pair"""
+        try:
+            price = await self._get_current_price(pair)
+            strategy = self.strategies[pair]
+
+            if await strategy.should_buy(price):
+                await self._execute_buy(pair, price)
+            elif await strategy.should_sell(price):
+                await self._execute_sell(pair, price)
 
         except Exception as e:
-            logging.error(f"Error during bot execution: {e}")
+            logger.error(f"Error processing {pair}: {e}")
+            await self.notifier.notify_error(e, f"pair-processing-{pair}")
 
-    def stop(self):
+    @async_retry(max_retries=3, initial_delay=1.0)
+    async def _get_current_price(self, pair: str) -> Decimal:
+        """Get current market price with retry logic"""
+        ticker = await self.exchange.client.get_symbol_ticker(symbol=pair)
+        return Decimal(ticker['price'])
+
+    async def _execute_buy(self, pair: str, price: Decimal):
+        """Execute buy order workflow"""
+        quantity = await self.portfolio.calculate_position_size(pair, price)
+        if quantity <= 0:
+            return
+
+        order = OrderActivity(
+            symbol=pair,
+            side='BUY',
+            quantity=quantity,
+            price=price,
+            stop_loss=await self.strategies[pair].calculate_risk_parameters(price)['stop_loss'],
+            take_profit=await self.strategies[pair].calculate_risk_parameters(price)['take_profit']
+        )
+        await self.order_executor.execute_order(order)
+
+    async def _execute_sell(self, pair: str, price: Decimal):
+        """Execute sell order workflow"""
+        # Implement sell logic similar to buy
+        pass
+
+    async def graceful_shutdown(self):
+        """Perform graceful shutdown sequence"""
+        logger.info("🛑 Initiating shutdown sequence")
         self.running = False
+        
+        shutdown_tasks = [
+            self.exchange.client.close_connection(),
+            self.storage.close(),
+            self.notifier.close()
+        ]
+        
+        await asyncio.gather(*shutdown_tasks)
+        logger.info("✅ Clean shutdown completed")
+
+class BinanceExchangeClient:
+    """Binance exchange client implementation"""
+    
+    def __init__(self, settings: AppSettings):
+        self.client = AsyncClient(
+            api_key=settings.exchange.api_key,
+            api_secret=settings.exchange.api_secret.get_secret_value(),
+            testnet=settings.exchange.testnet
+        )
+        self.symbol_info_cache: Dict[str, dict] = {}
+
+    async def initialize(self):
+        """Initialize exchange connection and cache symbol info"""
+        await self._cache_symbol_info()
+
+    async def _cache_symbol_info(self):
+        """Cache symbol information from exchange"""
+        exchange_info = await self.client.get_exchange_info()
+        for symbol in exchange_info['symbols']:
+            if symbol['symbol'] in AppSettings().trading_pairs:
+                self.symbol_info_cache[symbol['symbol']] = self._parse_symbol_info(symbol)
+
+    def _parse_symbol_info(self, symbol_info: dict) -> dict:
+        """Parse and normalize symbol information"""
+        filters = {f['filterType']: f for f in symbol_info['filters']}
+        return {
+            'min_quantity': Decimal(filters['LOT_SIZE']['minQty']),
+            'max_quantity': Decimal(filters['LOT_SIZE']['maxQty']),
+            'quantity_precision': int(symbol_info['baseAssetPrecision']),
+            'min_notional': Decimal(filters['MIN_NOTIONAL']['minNotional'])
+        }
+
+    @async_retry(max_retries=3, initial_delay=1.0)
+    async def get_balance(self, asset: str) -> Decimal:
+        """Get available balance for an asset"""
+        balance = await self.client.get_asset_balance(asset=asset)
+        return Decimal(balance['free'])
+
+    async def create_order(self, order: OrderActivity) -> dict:
+        """Create market order on exchange"""
+        return await self.client.create_order(
+            symbol=order.symbol,
+            side=order.side,
+            type='MARKET',
+            quantity=f"{order.quantity:.{self.symbol_info_cache[order.symbol]['quantity_precision']}f}"
+        )
 
 if __name__ == "__main__":
-    bot = BotTrading()
-    asyncio.run(bot.run())
+    import sys
+    from pathlib import Path
+    
+    # Add project root to PYTHONPATH
+    sys.path.append(str(Path(__file__).parent.parent))
+    
+    async def main():
+        from config.settings import AppSettings
+        from src.utils import configure_logging
+        
+        settings = AppSettings()
+        configure_logging(settings.logs_dir)
+        
+        bot = TradingBot(settings)
+        try:
+            await bot.initialize()
+            await bot.run()
+        finally:
+            await bot.graceful_shutdown()
+
+    asyncio.run(main())
