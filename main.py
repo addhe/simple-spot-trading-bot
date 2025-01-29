@@ -1,130 +1,222 @@
-# main.py
-import sys
 import os
 import time
 import logging
-import requests
-import asyncio
-from dotenv import load_dotenv
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-from src.bot import BotTrading
-from config.settings import settings
-from src.notifikasi_telegram import kirim_notifikasi_telegram  # Import fungsi untuk mengirim pesan Telegram
+import sqlite3
+from binance.client import Client
+from binance.exceptions import BinanceAPIException, BinanceOrderException
 
-# Konfigurasi logging yang lebih baik untuk produksi
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("bot.log"),
-        logging.StreamHandler()
-    ]
+# Konfigurasi logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Mengambil variabel lingkungan
+API_KEY = os.environ['API_KEY_SPOT_TESTNET_BINANCE']
+API_SECRET = os.environ['API_SECRET_SPOT_TESTNET_BINANCE']
+BASE_URL = 'https://testnet.binance.vision/api'
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID')
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+INTERVAL = '1m'
+CACHE_LIFETIME = 60  # 5 menit
+MAX_RETRIES = 5
+RETRY_BACKOFF = 1  # 1 detik
+BUY_MULTIPLIER = 0.925
+SELL_MULTIPLIER = 1.03
+TOLERANCE = 0.01
+
+# Inisialisasi klien Binance
+client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
+
+# Inisialisasi koneksi database SQLite
+DB_NAME = 'table_transactions.db'
+conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+cursor = conn.cursor()
+
+# Membuat tabel transactions jika belum ada
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT,
+    symbol TEXT,
+    type TEXT,
+    quantity REAL,
+    price REAL
 )
+''')
+conn.commit()
 
-def check_internet_connection(url='http://www.google.com', timeout=5):
-    """Memeriksa koneksi internet dengan mencoba mengakses URL tertentu."""
+# Fungsi untuk mengirim pesan ke Telegram
+def send_telegram_message(message):
+    import requests
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': TELEGRAM_GROUP_ID,
+        'text': message
+    }
+    response = requests.post(url, json=payload)
+    return response.json()
+
+# Fungsi untuk membeli aset
+def buy_asset(symbol, quantity):
     try:
-        requests.get(url, timeout=timeout)
-        return True
-    except requests.ConnectionError:
-        logging.error("Tidak ada koneksi internet.")
+        order = client.order_market_buy(
+            symbol=symbol,
+            quantity=quantity
+        )
+        logging.info(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        send_telegram_message(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        save_transaction(symbol, 'buy', quantity, float(order['fills'][0]['price']))
+        return order
+    except (BinanceAPIException, BinanceOrderException) as e:
+        logging.error(f"Gagal membeli {symbol}: {e}")
+        send_telegram_message(f"Gagal membeli {symbol}: {e}")
+        return None
+
+# Fungsi untuk menjual aset
+def sell_asset(symbol, quantity):
+    try:
+        order = client.order_market_sell(
+            symbol=symbol,
+            quantity=quantity
+        )
+        logging.info(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        send_telegram_message(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        save_transaction(symbol, 'sell', quantity, float(order['fills'][0]['price']))
+        return order
+    except (BinanceAPIException, BinanceOrderException) as e:
+        logging.error(f"Gagal menjual {symbol}: {e}")
+        send_telegram_message(f"Gagal menjual {symbol}: {e}")
+        return None
+
+# Fungsi untuk mendapatkan harga terakhir
+def get_last_price(symbol):
+    try:
+        ticker = client.get_symbol_ticker(symbol=symbol)
+        return float(ticker['price'])
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan harga terakhir untuk {symbol}: {e}")
+        return None
+
+# Fungsi untuk mendapatkan saldo
+def get_balances():
+    try:
+        balances = client.get_account()['balances']
+        usdt_balance = next((item for item in balances if item['asset'] == 'USDT'), None)
+        usdt_free = float(usdt_balance['free']) if usdt_balance else 0.0
+        asset_balances = {item['asset']: float(item['free']) for item in balances if item['asset'] in ['BTC', 'ETH', 'SOL']}
+        return usdt_free, asset_balances
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan saldo: {e}")
+        return 0.0, {}
+
+# Fungsi untuk mendapatkan informasi simbol
+def get_symbol_info(symbol):
+    try:
+        symbol_info = client.get_symbol_info(symbol)
+        for filter_info in symbol_info['filters']:
+            if filter_info['filterType'] == 'LOT_SIZE':
+                step_size = float(filter_info['stepSize'])
+                return step_size
+        logging.error(f"Tidak ditemukan stepSize untuk simbol {symbol}")
+        return None
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan informasi simbol untuk {symbol}: {e}")
+        return None
+
+# Fungsi untuk membulatkan jumlah aset sesuai dengan presisi yang diizinkan
+def round_quantity(quantity, step_size):
+    return round(quantity / step_size) * step_size
+
+# Fungsi untuk memeriksa apakah saldo cukup untuk membeli aset
+def can_buy_asset(usdt_free, last_price, quantity):
+    return usdt_free >= last_price * quantity
+
+# Fungsi untuk menyimpan transaksi ke database
+def save_transaction(symbol, type, quantity, price):
+    try:
+        cursor.execute('''
+            INSERT INTO transactions (timestamp, symbol, type, quantity, price)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (time.strftime('%Y-%m-%d %H:%M:%S'), symbol, type, quantity, price))
+        conn.commit()
+        logging.info(f"Transaksi {type} {quantity} {symbol} pada harga {price} disimpan ke database")
+    except sqlite3.Error as e:
+        logging.error(f"Gagal menyimpan transaksi ke database: {e}")
+
+# Fungsi untuk memuat riwayat transaksi dari database
+def load_transactions():
+    try:
+        cursor.execute('SELECT symbol, type, quantity, price FROM transactions')
+        transactions = cursor.fetchall()
+        return transactions
+    except sqlite3.Error as e:
+        logging.error(f"Gagal memuat riwayat transaksi dari database: {e}")
+        return []
+
+# Fungsi untuk mengirimkan status saldo setiap satu jam
+def send_status_update():
+    usdt_free, asset_balances = get_balances()
+    status_message = f"Status Saldo:\nSaldo USDT: {usdt_free}\nSaldo Aset: {asset_balances}"
+    logging.info(status_message)
+    send_telegram_message(status_message)
+
+# Fungsi untuk memeriksa apakah ada pending order
+def has_pending_orders():
+    try:
+        open_orders = client.get_open_orders()
+        return len(open_orders) > 0
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan open orders: {e}")
         return False
 
-def check_binance_status():
-    """Memeriksa status API Binance."""
-    try:
-        response = requests.get(f"{settings['BASE_URL']}/api/v3/ping", timeout=5)
-        if response.status_code == 200:
-            logging.info("API Binance dalam keadaan baik.")
-            return True
-        else:
-            logging.warning("API Binance tidak responsif.")
-            return False
-    except requests.RequestException as e:
-        logging.error(f"Error saat memeriksa status API Binance: {e}")
-        return False
+# Fungsi utama
+def main():
+    last_status_update = time.time()
+    transactions = load_transactions()
+    buy_prices = {symbol: None for symbol in SYMBOLS}
 
-async def retry_request(func, retries=3, delay=2, *args, **kwargs):
-    """Melakukan retry pada fungsi yang diberikan jika terjadi kesalahan dengan menggunakan async."""
-    for attempt in range(retries):
-        if check_internet_connection() and check_binance_status():
-            try:
-                return await func(*args, **kwargs)
-            except requests.exceptions.SSLError as ssl_error:
-                logging.error(f"SSL Error: {ssl_error}. Coba lagi dalam {delay} detik...")
-                await asyncio.sleep(delay)
-            except requests.exceptions.ConnectionError as conn_error:
-                logging.error(f"Connection Error: {conn_error}. Coba lagi dalam {delay} detik...")
-                await asyncio.sleep(delay)
-            except Exception as e:
-                logging.error(f"Error saat melakukan request: {e}. Coba lagi dalam {delay} detik...")
-                await asyncio.sleep(delay)
-        else:
-            logging.error("Koneksi internet atau API Binance tidak tersedia.")
-            await asyncio.sleep(delay)
-    raise Exception("Gagal melakukan request setelah beberapa kali percobaan.")
+    while True:
+        usdt_free, asset_balances = get_balances()
+        logging.info(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
+        send_telegram_message(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
 
-class ReloadHandler(FileSystemEventHandler):
-    """Handler untuk memantau perubahan file konfigurasi dan strategi."""
-    def __init__(self, bot):
-        self.bot = bot
-        self.lock = False  # Untuk mencegah reload ganda dalam waktu singkat
-        self.last_modified_time = 0
+        if has_pending_orders():
+            logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
+            time.sleep(300)  # 5 menit
+            continue
 
-    def on_modified(self, event):
-        """Menghandle perubahan file yang dimonitor untuk reload bot."""
-        current_time = time.time()
-        if self.lock or (current_time - self.last_modified_time < 2):  # Debounce 2 detik
-            return
+        for symbol in SYMBOLS:
+            last_price = get_last_price(symbol)
+            if last_price is None:
+                continue
 
-        self.lock = True
-        self.last_modified_time = current_time
+            asset = symbol.replace('USDT', '')
+            asset_balance = asset_balances.get(asset, 0.0)
 
-        try:
-            if event.src_path.endswith(('bot.py', 'strategy.py', 'config.py')):
-                logging.info(f"File {event.src_path} dimodifikasi. Memuat ulang bot...")
-                self.bot.stop()  # Hentikan instance bot saat ini
-                self.bot = BotTrading()  # Buat instance bot baru
-                asyncio.create_task(self.bot.run())  # Jalankan bot lagi
-        except Exception as e:
-            logging.error(f"Error saat memuat ulang bot: {e}")
-            kirim_notifikasi_telegram(f"Error saat memuat ulang bot: {e}")  # Kirim pesan error ke Telegram
-        finally:
-            self.lock = False
+            if asset_balance == 0.0:
+                # Membeli aset jika tidak memiliki aset tersebut
+                quantity = usdt_free * BUY_MULTIPLIER / last_price
+                step_size = get_symbol_info(symbol)
+                if step_size is not None:
+                    quantity = round_quantity(quantity, step_size)
+                    if quantity > 0 and can_buy_asset(usdt_free, last_price, quantity):
+                        buy_asset(symbol, quantity)
+                        buy_prices[symbol] = last_price
+                        time.sleep(300)  # 5 menit
+            else:
+                # Menjual aset jika harga naik 3%
+                sell_price = last_price * SELL_MULTIPLIER
+                if sell_price >= last_price * (1 + TOLERANCE):
+                    buy_price = buy_prices.get(symbol, None)
+                    if buy_price is not None and sell_price > buy_price:
+                        sell_asset(symbol, asset_balance)
+                        time.sleep(300)  # 5 menit
 
-async def main():
-    """Fungsi utama untuk menjalankan bot trading dan monitor file perubahan."""
-    load_dotenv()  # Memuat variabel lingkungan dari file .env
+        # Mengirimkan status saldo setiap satu jam
+        if time.time() - last_status_update >= 3600:  # 3600 detik = 1 jam
+            send_status_update()
+            last_status_update = time.time()
 
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
-
-    try:
-        bot = BotTrading()  # Membuat instance bot baru
-        observer = Observer()  # Membuat observer untuk monitor perubahan file
-        event_handler = ReloadHandler(bot)  # Membuat handler untuk perubahan file
-
-        # Path absolut untuk keandalan yang lebih baik
-        src_path = os.path.abspath('src')
-        observer.schedule(event_handler, path=src_path, recursive=False)
-        observer.start()  # Mulai observer untuk monitoring perubahan file
-
-        # Menjalankan bot secara asynchronous
-        await bot.run()  # Mulai logika trading bot asinkron
-
-    except KeyboardInterrupt:
-        logging.info("Mematikan bot dan observer.")
-        observer.stop()  # Hentikan observer saat ada interrupt (Ctrl+C)
-    except Exception as e:
-        logging.error(f"Error saat menjalankan bot: {e}")
-        kirim_notifikasi_telegram(f"Error saat menjalankan bot: {e}")  # Kirim pesan error ke Telegram
-    finally:
-        observer.join()  # Tunggu observer untuk berhenti dengan baik
+        time.sleep(CACHE_LIFETIME)
 
 if __name__ == "__main__":
-    try:
-        # Menjalankan aplikasi secara asinkron menggunakan asyncio
-        asyncio.run(main())
-    except Exception as e:
-        logging.critical(f"Terjadi kesalahan fatal saat menjalankan aplikasi: {e}")
-        kirim_notifikasi_telegram(f"Terjadi kesalahan fatal saat menjalankan aplikasi: {e}")  # Kirim pesan error ke Telegram
+    main()
