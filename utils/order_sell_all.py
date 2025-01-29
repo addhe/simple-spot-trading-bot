@@ -1,64 +1,82 @@
-import logging  
-from binance.client import Client  
-from config.settings import settings  
+import logging
+from binance.client import Client
+
+# Konfigurasi logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
+                    filename='sell_all_assets.log', filemode='w')  # Menyimpan log ke file
+
+# Mengambil variabel lingkungan dari settings
+API_KEY = os.environ['API_KEY_SPOT_TESTNET_BINANCE']
+API_SECRET = os.environ['API_SECRET_SPOT_TESTNET_BINANCE']
+BASE_URL = 'https://testnet.binance.vision/api'
+
+
+# Inisialisasi klien Binance dengan API Key dan Secret
+client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
 
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
-# Konfigurasi logging  
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',   
-                    filename='sell_all_assets.log', filemode='w')  # Menyimpan log ke file  
-  
-def sell_all_assets():  
-    # Inisialisasi klien Binance dengan API Key dan Secret  
-    client = Client(settings['API_KEY'], settings['API_SECRET'])  
-    client.API_URL = 'https://testnet.binance.vision/api'  # Setel URL ke Testnet  
-  
-    try:  
-        # Cek koneksi dengan API  
-        logging.info("Menghubungkan ke Binance Testnet...")  
-        server_time = client.get_server_time()  
-        logging.info(f"Waktu server: {server_time['serverTime']}")  
-  
-        for symbol in SYMBOLS:  
-            asset = symbol[:-4]  # Mengambil nama aset (misalnya BTC dari BTCUSDT)  
-            balance = client.get_asset_balance(asset=asset)  
-  
-            if balance and float(balance['free']) > 0:  
-                quantity = float(balance['free'])  # Mengambil jumlah yang tersedia untuk dijual  
-                logging.info(f"Mencoba menjual {quantity} {asset} untuk {symbol}...")  
-  
-                # Membuat order jual  
-                response = client.create_order(  
-                    symbol=symbol,  
-                    side='SELL',  
-                    type='MARKET',  # Menggunakan order pasar untuk menjual  
-                    quantity=quantity  
-                )  
-  
-                # Menyusun informasi order yang berhasil  
-                order_info = {  
-                    'symbol': response['symbol'],  
-                    'orderId': response['orderId'],  
-                    'executedQty': response['executedQty'],  
-                    'cummulativeQuoteQty': response['cummulativeQuoteQty'],  
-                    'status': response['status'],  
-                    'fills': response['fills']  
-                }  
-  
-                # Log hasil penjualan  
-                logging.info(f"Order jual berhasil untuk {asset}:")  
-                logging.info(f"  - Order ID: {order_info['orderId']}")  
-                logging.info(f"  - Jumlah yang dieksekusi: {order_info['executedQty']} {asset}")  
-                logging.info(f"  - Total nilai transaksi: {order_info['cummulativeQuoteQty']} USDT")  
-                logging.info(f"  - Status: {order_info['status']}")  
-                for fill in order_info['fills']:  
-                    logging.info(f"    - Harga: {fill['price']} USDT, Jumlah: {fill['qty']} {asset}")  
-  
-            else:  
-                logging.info(f"Tidak ada saldo untuk {asset}.")  
-  
-    except Exception as e:  
-        logging.error(f"Terjadi kesalahan: {e}")  
-  
-if __name__ == "__main__":  
-    sell_all_assets()  
+def get_asset_balance(asset):
+    try:
+        balances = client.get_account()['balances']
+        asset_balance = next((item for item in balances if item['asset'] == asset), None)
+        free_balance = float(asset_balance['free']) if asset_balance else 0.0
+        return free_balance
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan saldo untuk aset {asset}: {e}")
+        return 0.0
+
+def get_symbol_info(symbol):
+    try:
+        symbol_info = client.get_symbol_info(symbol)
+        for filter_info in symbol_info['filters']:
+            if filter_info['filterType'] == 'LOT_SIZE':
+                step_size = float(filter_info['stepSize'])
+                min_qty = float(filter_info['minQty'])
+                max_qty = float(filter_info['maxQty'])
+                return step_size, min_qty, max_qty
+        logging.error(f"Tidak ditemukan stepSize, minQty, atau maxQty untuk simbol {symbol}")
+        return None, None, None
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan informasi simbol untuk {symbol}: {e}")
+        return None, None, None
+
+def round_quantity(quantity, step_size):
+    return round(quantity / step_size) * step_size
+
+def sell_asset(symbol, quantity):
+    try:
+        order = client.order_market_sell(
+            symbol=symbol,
+            quantity=quantity
+        )
+        logging.info(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        return order
+    except (BinanceAPIException, BinanceOrderException) as e:
+        logging.error(f"Gagal menjual {symbol}: {e}")
+        return None
+
+def sell_all_assets():
+    for symbol in SYMBOLS:
+        asset = symbol.replace('USDT', '')
+        asset_balance = get_asset_balance(asset)
+        if asset_balance == 0.0:
+            logging.info(f"Tidak ada saldo untuk {asset}")
+            continue
+
+        step_size, min_qty, max_qty = get_symbol_info(symbol)
+        if step_size is None or min_qty is None or max_qty is None:
+            logging.error(f"Gagal mendapatkan informasi simbol untuk {symbol}")
+            continue
+
+        quantity = round_quantity(asset_balance, step_size)
+        quantity = max(quantity, min_qty)
+        quantity = min(quantity, max_qty)
+
+        if quantity > 0:
+            sell_asset(symbol, quantity)
+        else:
+            logging.info(f"Jumlah aset {asset} tidak memenuhi syarat minimal untuk penjualan")
+
+if __name__ == "__main__":
+    sell_all_assets()
