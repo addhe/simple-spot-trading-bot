@@ -1,8 +1,9 @@
 import logging  
 from binance.client import Client  
 from config.settings import settings  
-from config.config import SYMBOLS  # Mengimpor SYMBOLS dari config/config.py  
-  
+
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+
 # Konfigurasi logging  
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',   
                     filename='sell_all_assets.log', filemode='w')  # Menyimpan log ke file  
