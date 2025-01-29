@@ -27,9 +27,8 @@ class PriceActionStrategy:
     def _initialize_binance_client(self):
         """Initialize Binance client with API keys."""
         try:
-            api_url = 'https://testnet.binance.vision/api' if self.use_testnet else 'https://api.binance.com/api'
             client = Client(settings['API_KEY'], settings['API_SECRET'])
-            client.API_URL = api_url
+            client.API_URL = settings['BASE_URL']
             logging.info(f"Binance client initialized for symbol {self.symbol}. Testnet: {self.use_testnet}")
             return client
         except Exception as e:

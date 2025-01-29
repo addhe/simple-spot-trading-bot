@@ -7,7 +7,6 @@ import asyncio
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config.settings import settings
-from config.config import SYMBOLS, INTERVAL
 from src.strategy import PriceActionStrategy
 from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell
 from src.check_price import CryptoPriceChecker
@@ -19,6 +18,10 @@ from src.logger import redirect_stdout_stderr
 log_file_path = "logs/bot/bot.log"
 os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 redirect_stdout_stderr(log_file_path)
+
+# Konfigure symbols for trading
+SYMBOLS = settings['SYMBOLS']
+INTERVAL = settings['INTERVAL']
 
 class DataStorage:
     def __init__(self, db_path='bot_trading.db'):
@@ -251,20 +254,35 @@ class BotTrading:
             except Exception as e:
                 logging.error(f"Error checking prices for {symbol}: {e}")
 
+    async def _create_order(self, symbol: str, side: str, quantity: float, price: float) -> None:
+        rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
+        rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
+        order = self.client.create_order(
+            symbol=symbol,
+            side=side,
+            type='LIMIT',
+            quantity=rounded_quantity,
+            price=rounded_price,
+            timeInForce='GTC'
+        )
+        return order
+
+    async def _notify_trade(self, symbol: str, side: str, quantity: float, price: float) -> None:
+        usdt_balance = self.get_usdt_balance()
+        asset_status = self.get_all_asset_status()
+        if side == 'BUY':
+            notifikasi_buy(symbol, quantity, price, usdt_balance, asset_status)
+        else:
+            notifikasi_sell(symbol, quantity, price, usdt_balance, asset_status)
+
     async def execute_buy(self, symbol: str, price: float, quantity: float, strategy: PriceActionStrategy):
         try:
             rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
             rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
 
-            order = self.client.create_order(
-                symbol=symbol,
-                side='BUY',
-                type='LIMIT',
-                quantity=rounded_quantity,
-                price=rounded_price,
-                timeInForce='GTC'
-            )
+            order = await self._create_order(symbol, 'BUY', quantity, price)
             logging.info(f"Executed BUY for {symbol}: {quantity} at {price}")
+            await self._notify_trade(symbol, 'BUY', quantity, price)
 
             # Save activity and notify
             self.latest_activities[symbol] = {'buy': True, 'sell': False, 'quantity': quantity, 'price': price, 'stop_loss': None, 'take_profit': None}
@@ -282,17 +300,10 @@ class BotTrading:
             quantity = activity['quantity']
             rounded_price = round(price, self.symbol_info[symbol]['price_precision'])
             rounded_quantity = round(quantity, self.symbol_info[symbol]['quantity_precision'])
-
-            order = self.client.create_order(
-                symbol=symbol,
-                side='SELL',
-                type='LIMIT',
-                quantity=rounded_quantity,
-                price=rounded_price,
-                timeInForce='GTC'
-            )
-
+            order = await self._create_order(symbol, 'SELL', quantity, price)
             logging.info(f"Executed SELL for {symbol}: {quantity} at {price}")
+            await self._notify_trade(symbol, 'SELL', quantity, price)
+
             self.latest_activities[symbol] = {'buy': False, 'sell': True, 'quantity': 0, 'price': 0, 'stop_loss': None, 'take_profit': None}
             self.storage.save_latest_activity(symbol, self.latest_activities[symbol])
             usdt_balance = self.get_usdt_balance()

@@ -82,7 +82,7 @@ class ReloadHandler(FileSystemEventHandler):
         self.last_modified_time = current_time
 
         try:
-            if event.src_path.endswith(("bot.py", "strategy.py", "config.py")):
+            if event.src_path.endswith(("bot.py", "strategy.py", "settings.py")):
                 logging.info(
                     f"File {event.src_path} dimodifikasi. Memuat ulang bot..."
                 )

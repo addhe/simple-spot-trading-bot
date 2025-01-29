@@ -7,6 +7,7 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config.settings import settings
 from src.logger import redirect_stdout_stderr
+from config.settings import settings
 
 # Konfigurasi logging yang lebih baik untuk produksi
 log_file_path = "logs/check_price.log"
@@ -14,12 +15,12 @@ os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 redirect_stdout_stderr(log_file_path)
 
 class CryptoPriceChecker:
-    BUY_MULTIPLIER = 0.925
-    SELL_MULTIPLIER = 1.08
+    BUY_MULTIPLIER = settings['BUY_MULTIPLIER']
+    SELL_MULTIPLIER = settings['SELL_MULTIPLIER']
     DATA_DIR = "historical_data"
-    CACHE_LIFETIME = 60  # Cache selama 60 detik untuk pengambilan data baru
-    MAX_RETRIES = 5
-    RETRY_BACKOFF = 2  # Waktu backoff eksponensial (detik)
+    CACHE_LIFETIME = settings['CACHE_LIFETIME']
+    MAX_RETRIES = settings['MAX_RETRIES']
+    RETRY_BACKOFF = settings['RETRY_BACKOFF']
 
     def __init__(self, client: Client):
         self.client = client
