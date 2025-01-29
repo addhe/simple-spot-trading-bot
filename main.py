@@ -13,8 +13,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 API_KEY = os.environ['API_KEY_SPOT_TESTNET_BINANCE']
 API_SECRET = os.environ['API_SECRET_SPOT_TESTNET_BINANCE']
 BASE_URL = 'https://testnet.binance.vision/api'
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID')
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 CACHE_LIFETIME = 300  # 5 menit
+MAX_RETRIES = 5
+RETRY_BACKOFF = 1  # 1 detik
 BUY_MULTIPLIER = 0.925
 SELL_MULTIPLIER = 1.03
 TOLERANCE = 0.01
@@ -155,24 +159,10 @@ def has_pending_orders():
         logging.error(f"Gagal mendapatkan open orders: {e}")
         return False
 
-# Fungsi untuk mendapatkan harga pembelian terakhir
-def get_last_buy_price(symbol):
-    try:
-        cursor.execute('''
-            SELECT price FROM transactions
-            WHERE symbol = ? AND type = 'buy'
-            ORDER BY timestamp DESC
-            LIMIT 1
-        ''', (symbol,))
-        result = cursor.fetchone()
-        return result[0] if result else None
-    except sqlite3.Error as e:
-        logging.error(f"Gagal mendapatkan harga pembelian terakhir: {e}")
-        return None
-
 # Fungsi utama
 def main():
     last_status_update = time.time()
+    transactions = load_transactions()
     buy_prices = {symbol: None for symbol in SYMBOLS}
 
     while True:
