@@ -142,15 +142,19 @@ def save_transaction(symbol, type, quantity, price):
     except sqlite3.Error as e:
         logging.error(f"Gagal menyimpan transaksi ke database: {e}")
 
-# Fungsi untuk memuat riwayat transaksi dari database
-def load_transactions():
+# Fungsi untuk mendapatkan riwayat transaksi
+def get_transaction_history(symbol, type):
     try:
-        cursor.execute('SELECT symbol, type, quantity, price FROM transactions')
-        transactions = cursor.fetchall()
-        return transactions
+        cursor.execute('''
+            SELECT * FROM transactions
+            WHERE symbol = ? AND type = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ''', (symbol, type))
+        return cursor.fetchone()
     except sqlite3.Error as e:
-        logging.error(f"Gagal memuat riwayat transaksi dari database: {e}")
-        return []
+        logging.error(f"Gagal mendapatkan riwayat transaksi: {e}")
+        return None
 
 # Fungsi untuk mengirimkan status saldo setiap satu jam
 def send_status_update():
@@ -159,8 +163,8 @@ def send_status_update():
     logging.info(status_message)
     send_telegram_message(status_message)
 
-# Fungsi untuk memeriksa apakah ada pending order
-def has_pending_orders():
+# Fungsi untuk mengecek pending orders
+def check_pending_orders():
     try:
         open_orders = client.get_open_orders()
         return len(open_orders) > 0
@@ -170,19 +174,11 @@ def has_pending_orders():
 
 # Fungsi utama
 def main():
-    last_status_update = time.time()
-    transactions = load_transactions()
-    buy_prices = {symbol: None for symbol in SYMBOLS}
-
+    last_status_time = time.time()
     while True:
         usdt_free, asset_balances = get_balances()
         logging.info(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
         send_telegram_message(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
-
-        if has_pending_orders():
-            logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
-            time.sleep(300)  # 5 menit
-            continue
 
         for symbol in SYMBOLS:
             last_price = get_last_price(symbol)
@@ -199,22 +195,24 @@ def main():
                 if step_size is not None:
                     quantity = round_quantity(quantity, step_size)
                     if quantity > 0 and can_buy_asset(usdt_free, last_price, quantity):
-                        buy_asset(symbol, quantity)
-                        buy_prices[symbol] = last_price
-                        time.sleep(300)  # 5 menit
+                        if not check_pending_orders():
+                            buy_asset(symbol, quantity)
+                            time.sleep(300)  # Tunda 5 menit setelah membeli
             else:
-                # Menjual aset jika harga naik 3%
-                sell_price = last_price * SELL_MULTIPLIER
-                if sell_price >= last_price * (1 + TOLERANCE):
-                    buy_price = buy_prices.get(symbol, None)
-                    if buy_price is not None and sell_price > buy_price:
-                        sell_asset(symbol, asset_balance)
-                        time.sleep(300)  # 5 menit
+                # Mendapatkan harga pembelian terakhir
+                last_buy = get_transaction_history(symbol, 'buy')
+                if last_buy is not None:
+                    last_buy_price = last_buy[4]
+                    sell_price = last_price * SELL_MULTIPLIER
+                    if sell_price >= last_buy_price * (1 + TOLERANCE):
+                        if not check_pending_orders():
+                            sell_asset(symbol, asset_balance)
+                            time.sleep(300)  # Tunda 5 menit setelah menjual
 
         # Mengirimkan status saldo setiap satu jam
-        if time.time() - last_status_update >= 3600:  # 3600 detik = 1 jam
+        if time.time() - last_status_time >= 3600:  # 3600 detik = 1 jam
             send_status_update()
-            last_status_update = time.time()
+            last_status_time = time.time()
 
         time.sleep(CACHE_LIFETIME)
 
