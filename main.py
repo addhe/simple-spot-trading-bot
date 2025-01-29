@@ -17,9 +17,9 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID')
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 INTERVAL = '1m'
-CACHE_LIFETIME = 60
+CACHE_LIFETIME = 60  # 5 menit
 MAX_RETRIES = 5
-RETRY_BACKOFF = 1
+RETRY_BACKOFF = 1  # 1 detik
 BUY_MULTIPLIER = 0.925
 SELL_MULTIPLIER = 1.03
 TOLERANCE = 0.01
@@ -44,6 +44,38 @@ CREATE TABLE IF NOT EXISTS transactions (
 )
 ''')
 conn.commit()
+
+# Fungsi untuk membeli aset
+def buy_asset(symbol, quantity):
+    try:
+        order = client.order_market_buy(
+            symbol=symbol,
+            quantity=quantity
+        )
+        logging.info(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        send_telegram_message(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        save_transaction(symbol, 'buy', quantity, float(order['fills'][0]['price']))
+        return order
+    except (BinanceAPIException, BinanceOrderException) as e:
+        logging.error(f"Gagal membeli {symbol}: {e}")
+        send_telegram_message(f"Gagal membeli {symbol}: {e}")
+        return None
+
+# Fungsi untuk menjual aset
+def sell_asset(symbol, quantity):
+    try:
+        order = client.order_market_sell(
+            symbol=symbol,
+            quantity=quantity
+        )
+        logging.info(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        send_telegram_message(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        save_transaction(symbol, 'sell', quantity, float(order['fills'][0]['price']))
+        return order
+    except (BinanceAPIException, BinanceOrderException) as e:
+        logging.error(f"Gagal menjual {symbol}: {e}")
+        send_telegram_message(f"Gagal menjual {symbol}: {e}")
+        return None
 
 # Fungsi untuk mendapatkan harga terakhir
 def get_last_price(symbol):
@@ -135,6 +167,21 @@ def get_last_buy_price(symbol):
         logging.error(f"Gagal mendapatkan harga pembelian terakhir: {e}")
         return None
 
+# Fungsi untuk mendapatkan riwayat transaksi
+def get_transaction_history(symbol):
+    try:
+        cursor.execute('''
+            SELECT * FROM transactions
+            WHERE symbol = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ''', (symbol,))
+        result = cursor.fetchone()
+        return result
+    except sqlite3.Error as e:
+        logging.error(f"Gagal mendapatkan riwayat transaksi: {e}")
+        return None
+
 # Fungsi utama
 def main():
     status_thread = threading.Thread(target=send_status_every_hour)
@@ -173,18 +220,16 @@ def main():
                     quantity = min(quantity, max_qty)
 
                     if quantity > 0 and can_buy_asset(usdt_free, last_price, quantity):
-                        buy_order = buy_asset(symbol, quantity)
-                        if buy_order:
-                            time.sleep(300)  # 5 menit
+                        buy_asset(symbol, quantity)
+                        time.sleep(300)  # 5 menit
             else:
                 # Menjual aset jika harga naik 3%
                 last_buy_price = get_last_buy_price(symbol)
                 if last_buy_price is not None:
                     sell_price = last_price * SELL_MULTIPLIER
                     if sell_price >= last_buy_price * (1 + TOLERANCE):
-                        sell_order = sell_asset(symbol, asset_balance)
-                        if sell_order:
-                            time.sleep(300)  # 5 menit
+                        sell_asset(symbol, asset_balance)
+                        time.sleep(300)  # 5 menit
 
         time.sleep(CACHE_LIFETIME)
 
