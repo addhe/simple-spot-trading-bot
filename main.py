@@ -154,6 +154,21 @@ def send_status_every_hour():
         send_telegram_message(status_message)
         time.sleep(3600)  # 1 jam
 
+# Fungsi untuk mendapatkan harga pembelian terakhir
+def get_last_buy_price(symbol):
+    try:
+        cursor.execute('''
+            SELECT price FROM transactions
+            WHERE symbol = ? AND type = 'buy'
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ''', (symbol,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except sqlite3.Error as e:
+        logging.error(f"Gagal mendapatkan harga pembelian terakhir: {e}")
+        return None
+
 # Fungsi utama
 def main():
     status_thread = threading.Thread(target=send_status_every_hour)
@@ -163,7 +178,7 @@ def main():
     while True:
         if has_pending_orders():
             logging.info("Ada pesanan terbuka, menunggu 5 menit sebelum melanjutkan.")
-            time.sleep(CACHE_LIFETIME)  # 5 menit
+            time.sleep(300)  # 5 menit
             continue
 
         usdt_free, asset_balances = get_balances()
@@ -194,7 +209,7 @@ def main():
                     if quantity > 0 and can_buy_asset(usdt_free, last_price, quantity):
                         buy_order = buy_asset(symbol, quantity)
                         if buy_order:
-                            time.sleep(CACHE_LIFETIME)  # 5 menit
+                            time.sleep(300)  # 5 menit
             else:
                 # Menjual aset jika harga naik 3%
                 last_buy_price = get_last_buy_price(symbol)
@@ -203,7 +218,7 @@ def main():
                     if sell_price >= last_buy_price * (1 + TOLERANCE):
                         sell_order = sell_asset(symbol, asset_balance)
                         if sell_order:
-                            time.sleep(CACHE_LIFETIME)  # 5 menit
+                            time.sleep(300)  # 5 menit
 
         time.sleep(CACHE_LIFETIME)
 

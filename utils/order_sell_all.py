@@ -20,57 +20,59 @@ SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
 def sell_all_assets():
     try:
-        balances = client.get_account()['balances']
-        for balance in balances:
-            asset = balance['asset']
-            free_balance = float(balance['free'])
-            if free_balance > 0 and asset in ['BTC', 'ETH', 'SOL']:
-                symbol = f"{asset}USDT"
-                step_size, min_qty, max_qty = get_symbol_info(symbol)
-                if step_size is not None and min_qty is not None and max_qty is not None:
-                    quantity = round_quantity(free_balance, step_size)
-                    quantity = max(quantity, min_qty)
-                    quantity = min(quantity, max_qty)
-                    if quantity > 0:
-                        sell_order = sell_asset(symbol, quantity)
-                        if sell_order:
-                            logging.info(f"Jual {quantity} {symbol} pada harga {sell_order['fills'][0]['price']}")
-                            send_telegram_message(f"Jual {quantity} {symbol} pada harga {sell_order['fills'][0]['price']}")
-    except (BinanceAPIException, BinanceOrderException) as e:
-        logging.error(f"Gagal menjual semua aset: {e}")
-        send_telegram_message(f"Gagal menjual semua aset: {e}")
+        # Cek koneksi dengan API
+        logging.info("Menghubungkan ke Binance Testnet...")
+        server_time = client.get_server_time()
+        logging.info(f"Waktu server: {server_time['serverTime']}")
 
-def get_symbol_info(symbol):
-    try:
-        symbol_info = client.get_symbol_info(symbol)
-        for filter_info in symbol_info['filters']:
-            if filter_info['filterType'] == 'LOT_SIZE':
-                step_size = float(filter_info['stepSize'])
-                min_qty = float(filter_info['minQty'])
-                max_qty = float(filter_info['maxQty'])
-                return step_size, min_qty, max_qty
-        logging.error(f"Tidak ditemukan stepSize, minQty, atau maxQty untuk simbol {symbol}")
-        return None, None, None
-    except BinanceAPIException as e:
-        logging.error(f"Gagal mendapatkan informasi simbol untuk {symbol}: {e}")
-        return None, None, None
+        for symbol in SYMBOLS:
+            asset = symbol[:-4]  # Mengambil nama aset (misalnya BTC dari BTCUSDT)
+            balance = client.get_asset_balance(asset=asset)
 
-def round_quantity(quantity, step_size):
-    return round(quantity / step_size) * step_size
+            if balance and float(balance['free']) > 0:
+                quantity = float(balance['free'])  # Mengambil jumlah yang tersedia untuk dijual
+                logging.info(f"Mencoba menjual {quantity} {asset} untuk {symbol}...")
 
-def sell_asset(symbol, quantity):
-    try:
-        order = client.order_market_sell(
-            symbol=symbol,
-            quantity=quantity
-        )
-        logging.info(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        send_telegram_message(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        return order
-    except (BinanceAPIException, BinanceOrderException) as e:
-        logging.error(f"Gagal menjual {symbol}: {e}")
-        send_telegram_message(f"Gagal menjual {symbol}: {e}")
-        return None
+                # Membuat order jual
+                response = client.order_market_sell(
+                    symbol=symbol,
+                    quantity=quantity
+                )
+
+                # Menyusun informasi order yang berhasil
+                order_info = {
+                    'symbol': response['symbol'],
+                    'orderId': response['orderId'],
+                    'executedQty': response['executedQty'],
+                    'cummulativeQuoteQty': response['cummulativeQuoteQty'],
+                    'status': response['status'],
+                    'fills': response['fills']
+                }
+
+                # Log hasil penjualan
+                logging.info(f"Order jual berhasil untuk {asset}:")
+                logging.info(f"  - Order ID: {order_info['orderId']}")
+                logging.info(f"  - Jumlah yang dieksekusi: {order_info['executedQty']} {asset}")
+                logging.info(f"  - Total nilai transaksi: {order_info['cummulativeQuoteQty']} USDT")
+                logging.info(f"  - Status: {order_info['status']}")
+                for fill in order_info['fills']:
+                    logging.info(f"    - Harga: {fill['price']} USDT, Jumlah: {fill['qty']} {asset}")
+
+                # Kirim pesan Telegram
+                message = (
+                    f"Order jual berhasil untuk {asset}:\n"
+                    f"  - Order ID: {order_info['orderId']}\n"
+                    f"  - Jumlah yang dieksekusi: {order_info['executedQty']} {asset}\n"
+                    f"  - Total nilai transaksi: {order_info['cummulativeQuoteQty']} USDT\n"
+                    f"  - Status: {order_info['status']}"
+                )
+                send_telegram_message(message)
+
+            else:
+                logging.info(f"Tidak ada saldo untuk {asset}.")
+
+    except Exception as e:
+        logging.error(f"Terjadi kesalahan: {e}")
 
 if __name__ == "__main__":
     sell_all_assets()
