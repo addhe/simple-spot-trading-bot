@@ -19,8 +19,8 @@ logging.basicConfig(
 )
 
 class CryptoPriceChecker:
-    BUY_MULTIPLIER = 0.94
-    SELL_MULTIPLIER = 1.065
+    BUY_MULTIPLIER = 0.925
+    SELL_MULTIPLIER = 1.08
     DATA_DIR = "historical_data"
     CACHE_LIFETIME = 60  # Cache selama 60 detik untuk pengambilan data baru
     MAX_RETRIES = 5
