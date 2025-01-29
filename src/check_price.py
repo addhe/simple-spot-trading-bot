@@ -7,10 +7,9 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config.settings import settings
 from src.logger import redirect_stdout_stderr
-from config.settings import settings
 
 # Konfigurasi logging yang lebih baik untuk produksi
-log_file_path = "logs/check_price.log"
+log_file_path = "logs/bot/bot.log"
 os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 redirect_stdout_stderr(log_file_path)
 
@@ -148,6 +147,15 @@ class CryptoPriceChecker:
         except Exception as e:
             logging.error(f"Error saat mengambil saldo: {e}")
 
+    def get_asset_balance(self, asset: str) -> float:
+        """Mengambil saldo aset."""
+        try:
+            balance = self.client.get_asset_balance(asset)
+            return float(balance['free']) if balance else 0.0
+        except Exception as e:
+            logging.error(f"Error saat mengambil saldo aset {asset}: {e}")
+            return 0.0
+
     def calculate_dynamic_buy_price(self, symbol: str) -> float:
         """Menghitung harga beli dinamis untuk simbol tertentu."""
         return self.calculate_dynamic_price(symbol, self.BUY_MULTIPLIER)
@@ -177,13 +185,18 @@ class CryptoPriceChecker:
             buy_price = self.calculate_dynamic_buy_price(symbol)
             sell_price = self.calculate_dynamic_sell_price(symbol)
             current_price = self.get_current_price(symbol)
+            base_asset = symbol.split('USDT')[0]
+            quote_asset = 'USDT'
+            base_asset_balance = self.get_asset_balance(base_asset)
+            quote_asset_balance = self.get_asset_balance(quote_asset)
 
             logging.info(f"Buy price: {buy_price}, Sell price: {sell_price}, Current price: {current_price}")
+            logging.info(f"Saldo {base_asset}: {base_asset_balance}, Saldo {quote_asset}: {quote_asset_balance}")
 
-            if current_price < buy_price and not latest_activity.get('buy', False):
+            if current_price < buy_price and not latest_activity.get('buy', False) and quote_asset_balance > 0:
                 logging.info(f"Harga saat ini untuk {symbol} lebih rendah dari harga beli: {current_price} < {buy_price}. Aksi: BUY")
                 return 'BUY', current_price
-            elif current_price > sell_price and latest_activity.get('buy', False):
+            elif current_price > sell_price and latest_activity.get('buy', False) and base_asset_balance > 0:
                 logging.info(f"Harga saat ini untuk {symbol} lebih tinggi dari harga jual: {current_price} > {sell_price}. Aksi: SELL")
                 return 'SELL', current_price
             else:

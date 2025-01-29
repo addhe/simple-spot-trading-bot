@@ -82,7 +82,7 @@ class ReloadHandler(FileSystemEventHandler):
         self.last_modified_time = current_time
 
         try:
-            if event.src_path.endswith(("bot.py", "strategy.py", "settings.py")):
+            if event.src_path.endswith(("bot.py", "check_price.py", "strategy.py", "settings.py")):
                 logging.info(
                     f"File {event.src_path} dimodifikasi. Memuat ulang bot..."
                 )
@@ -119,9 +119,16 @@ async def main():
         src_path = str(current_dir / "src")
         observer.schedule(event_handler, path=src_path, recursive=False)
         observer.start()  # Mulai observer untuk monitoring perubahan file
-
-        # Menjalankan bot secara asynchronous
-        await bot.run()  # Mulai logika trading bot asinkron
+        while True:
+            try:
+                # Menjalankan bot secara asynchronous
+                await bot.run()  # Mulai logika trading bot asinkron
+            except Exception as e:
+                logging.error(f"Error running bot: {e}")
+                # Handle restart or refresh logic here, without creating new tasks or loops
+            finally:
+                # Ensure any necessary cleanup happens here
+                pass
 
     except KeyboardInterrupt:
         logging.info("Mematikan bot dan observer.")
