@@ -14,7 +14,7 @@ API_KEY = os.environ['API_KEY_SPOT_TESTNET_BINANCE']
 API_SECRET = os.environ['API_SECRET_SPOT_TESTNET_BINANCE']
 BASE_URL = 'https://testnet.binance.vision/api'
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
-CACHE_LIFETIME = 60  # 5 menit
+CACHE_LIFETIME = 300  # 5 menit
 BUY_MULTIPLIER = 0.925
 SELL_MULTIPLIER = 1.03
 TOLERANCE = 0.01
@@ -39,6 +39,38 @@ CREATE TABLE IF NOT EXISTS transactions (
 )
 ''')
 conn.commit()
+
+# Fungsi untuk membeli aset
+def buy_asset(symbol, quantity):
+    try:
+        order = client.order_market_buy(
+            symbol=symbol,
+            quantity=quantity
+        )
+        logging.info(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        send_telegram_message(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        save_transaction(symbol, 'buy', quantity, float(order['fills'][0]['price']))
+        return order
+    except (BinanceAPIException, BinanceOrderException) as e:
+        logging.error(f"Gagal membeli {symbol}: {e}")
+        send_telegram_message(f"Gagal membeli {symbol}: {e}")
+        return None
+
+# Fungsi untuk menjual aset
+def sell_asset(symbol, quantity):
+    try:
+        order = client.order_market_sell(
+            symbol=symbol,
+            quantity=quantity
+        )
+        logging.info(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        send_telegram_message(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        save_transaction(symbol, 'sell', quantity, float(order['fills'][0]['price']))
+        return order
+    except (BinanceAPIException, BinanceOrderException) as e:
+        logging.error(f"Gagal menjual {symbol}: {e}")
+        send_telegram_message(f"Gagal menjual {symbol}: {e}")
+        return None
 
 # Fungsi untuk mendapatkan harga terakhir
 def get_last_price(symbol):
@@ -97,6 +129,23 @@ def save_transaction(symbol, type, quantity, price):
     except sqlite3.Error as e:
         logging.error(f"Gagal menyimpan transaksi ke database: {e}")
 
+# Fungsi untuk memuat riwayat transaksi dari database
+def load_transactions():
+    try:
+        cursor.execute('SELECT symbol, type, quantity, price FROM transactions')
+        transactions = cursor.fetchall()
+        return transactions
+    except sqlite3.Error as e:
+        logging.error(f"Gagal memuat riwayat transaksi dari database: {e}")
+        return []
+
+# Fungsi untuk mengirimkan status saldo setiap satu jam
+def send_status_update():
+    usdt_free, asset_balances = get_balances()
+    status_message = f"Status Saldo:\nSaldo USDT: {usdt_free}\nSaldo Aset: {asset_balances}"
+    logging.info(status_message)
+    send_telegram_message(status_message)
+
 # Fungsi untuk memeriksa apakah ada pending order
 def has_pending_orders():
     try:
@@ -105,45 +154,6 @@ def has_pending_orders():
     except BinanceAPIException as e:
         logging.error(f"Gagal mendapatkan open orders: {e}")
         return False
-
-# Fungsi untuk membeli aset
-def buy_asset(symbol, quantity):
-    try:
-        order = client.order_market_buy(
-            symbol=symbol,
-            quantity=quantity
-        )
-        logging.info(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        send_telegram_message(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        save_transaction(symbol, 'buy', quantity, float(order['fills'][0]['price']))
-        return order
-    except (BinanceAPIException, BinanceOrderException) as e:
-        logging.error(f"Gagal membeli {symbol}: {e}")
-        send_telegram_message(f"Gagal membeli {symbol}: {e}")
-        return None
-
-# Fungsi untuk menjual aset
-def sell_asset(symbol, quantity):
-    try:
-        order = client.order_market_sell(
-            symbol=symbol,
-            quantity=quantity
-        )
-        logging.info(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        send_telegram_message(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        save_transaction(symbol, 'sell', quantity, float(order['fills'][0]['price']))
-        return order
-    except (BinanceAPIException, BinanceOrderException) as e:
-        logging.error(f"Gagal menjual {symbol}: {e}")
-        send_telegram_message(f"Gagal menjual {symbol}: {e}")
-        return None
-
-# Fungsi untuk mengirimkan status saldo setiap satu jam
-def send_status_update():
-    usdt_free, asset_balances = get_balances()
-    status_message = f"Status Saldo:\nSaldo USDT: {usdt_free}\nSaldo Aset: {asset_balances}"
-    logging.info(status_message)
-    send_telegram_message(status_message)
 
 # Fungsi untuk mendapatkan harga pembelian terakhir
 def get_last_buy_price(symbol):
@@ -166,16 +176,16 @@ def main():
     buy_prices = {symbol: None for symbol in SYMBOLS}
 
     while True:
+        if has_pending_orders():
+            logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
+            time.sleep(CACHE_LIFETIME)  # 5 menit
+            continue
+
         usdt_free, asset_balances = get_balances()
         logging.info(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
         send_telegram_message(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
 
-        if has_pending_orders():
-            logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
-            time.sleep(300)  # 5 menit
-            continue
-
-        # Bagi saldo USDT merata antara semua simbol trading
+        # Bagi saldo USDT merata antara semua simbol
         usdt_per_symbol = usdt_free / len(SYMBOLS)
 
         for symbol in SYMBOLS:
@@ -199,7 +209,7 @@ def main():
                     if quantity > 0 and can_buy_asset(usdt_free, last_price, quantity):
                         buy_asset(symbol, quantity)
                         buy_prices[symbol] = last_price
-                        time.sleep(300)  # 5 menit
+                        time.sleep(CACHE_LIFETIME)  # 5 menit
             else:
                 # Menjual aset jika harga naik 3%
                 sell_price = last_price * SELL_MULTIPLIER
@@ -207,7 +217,7 @@ def main():
                     buy_price = buy_prices.get(symbol, None)
                     if buy_price is not None and sell_price > buy_price:
                         sell_asset(symbol, asset_balance)
-                        time.sleep(300)  # 5 menit
+                        time.sleep(CACHE_LIFETIME)  # 5 menit
 
         # Mengirimkan status saldo setiap satu jam
         if time.time() - last_status_update >= 3600:  # 3600 detik = 1 jam
