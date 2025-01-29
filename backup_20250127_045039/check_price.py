@@ -9,13 +9,13 @@ from config.settings import settings
 
 # Konfigurasi logging
 logging.basicConfig(
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format="%(asctime)s [%(levelname)s] %(message)s",
     level=logging.DEBUG,  # Mengubah level ke DEBUG untuk log yang lebih detail
-    datefmt='%Y-%m-%d %H:%M:%S',
+    datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        logging.FileHandler('check_price.log', mode='w'),
-        logging.StreamHandler()  # Menampilkan log juga ke konsol
-    ]
+        logging.FileHandler("check_price.log", mode="w"),
+        logging.StreamHandler(),  # Menampilkan log juga ke konsol
+    ],
 )
 
 class CryptoPriceChecker:
@@ -40,9 +40,11 @@ class CryptoPriceChecker:
         path = self._get_offline_data_path(symbol)
         if os.path.exists(path):
             logging.info(f"Memuat data historis offline untuk {symbol} dari {path}...")
-            return pd.read_csv(path, parse_dates=['timestamp'])
+            return pd.read_csv(path, parse_dates=["timestamp"])
         else:
-            logging.warning(f"Tidak ditemukan data historis offline untuk {symbol} di {path}.")
+            logging.warning(
+                f"Tidak ditemukan data historis offline untuk {symbol} di {path}."
+            )
             return pd.DataFrame()
 
     def _save_offline_data(self, symbol: str, data: pd.DataFrame):
@@ -62,77 +64,118 @@ class CryptoPriceChecker:
                 return func(*args, **kwargs)
             except BinanceAPIException as e:
                 retries += 1
-                logging.error(f"API Error {e}, Retrying {retries}/{self.MAX_RETRIES}...")
-                time.sleep(self.RETRY_BACKOFF * (2 ** retries))  # Exponential backoff
+                logging.error(
+                    f"API Error {e}, Retrying {retries}/{self.MAX_RETRIES}..."
+                )
+                time.sleep(self.RETRY_BACKOFF * (2**retries))  # Exponential backoff
             except Exception as e:
                 logging.error(f"Unexpected error: {e}")
                 break
         return None
 
-    def get_historical_data(self, symbol: str, interval: str = '1m', start_time: str = '1 day ago UTC') -> pd.DataFrame:
+    def get_historical_data(
+        self, symbol: str, interval: str = "1m", start_time: str = "1 day ago UTC"
+    ) -> pd.DataFrame:
         """Mengambil data historis untuk simbol tertentu dengan menggunakan cache atau API."""
         # Cek apakah data historis sudah tersedia dalam cache
-        if symbol in self.cached_data and time.time() - self.cached_data[symbol]['timestamp'] < self.CACHE_LIFETIME:
+        if (
+            symbol in self.cached_data
+            and time.time() - self.cached_data[symbol]["timestamp"]
+            < self.CACHE_LIFETIME
+        ):
             logging.info(f"Data historis untuk {symbol} diambil dari cache.")
-            return self.cached_data[symbol]['data']
+            return self.cached_data[symbol]["data"]
 
         # Jika data offline tersedia, coba gunakan data tersebut
         offline_data = self._load_offline_data(symbol)
         try:
             logging.info(f"Mengambil data historis untuk {symbol} dari API...")
-            klines = self._retry_api_call(self.client.get_historical_klines, symbol, interval, start_time)
+            klines = self._retry_api_call(
+                self.client.get_historical_klines, symbol, interval, start_time
+            )
 
             if klines is None:
-                logging.error(f"Gagal mengambil data historis dari API, menggunakan data offline.")
+                logging.error(
+                    f"Gagal mengambil data historis dari API, menggunakan data offline."
+                )
                 return offline_data
 
             new_data = pd.DataFrame(
                 klines,
                 columns=[
-                    'timestamp', 'open', 'high', 'low', 'close',
-                    'volume', 'close_time', 'quote_asset_volume',
-                    'number_of_trades', 'taker_buy_base_asset_volume',
-                    'taker_buy_quote_asset_volume', 'ignore'
-                ]
+                    "timestamp",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "close_time",
+                    "quote_asset_volume",
+                    "number_of_trades",
+                    "taker_buy_base_asset_volume",
+                    "taker_buy_quote_asset_volume",
+                    "ignore",
+                ],
             )
-            new_data['timestamp'] = pd.to_datetime(new_data['timestamp'], unit='ms')
-            new_data['close'] = new_data['close'].astype(float)
+            new_data["timestamp"] = pd.to_datetime(new_data["timestamp"], unit="ms")
+            new_data["close"] = new_data["close"].astype(float)
 
             # Gabungkan data baru dengan data offline jika ada
             if not offline_data.empty:
-                last_timestamp = offline_data['timestamp'].max() if not offline_data.empty else None
-                new_data_timestamp = new_data['timestamp'].max() if not new_data.empty else None
+                last_timestamp = (
+                    offline_data["timestamp"].max() if not offline_data.empty else None
+                )
+                new_data_timestamp = (
+                    new_data["timestamp"].max() if not new_data.empty else None
+                )
 
                 if last_timestamp is None or new_data_timestamp > last_timestamp:
-                    combined_data = pd.concat([offline_data, new_data]).drop_duplicates(subset='timestamp').sort_values(by='timestamp')
+                    combined_data = (
+                        pd.concat([offline_data, new_data])
+                        .drop_duplicates(subset="timestamp")
+                        .sort_values(by="timestamp")
+                    )
                     self._save_offline_data(symbol, combined_data)
-                    self.cached_data[symbol] = {'data': combined_data, 'timestamp': time.time()}
+                    self.cached_data[symbol] = {
+                        "data": combined_data,
+                        "timestamp": time.time(),
+                    }
                     logging.info(f"Data historis untuk {symbol} berhasil diperbarui.")
                     return combined_data
                 else:
-                    logging.info(f"Tidak ada data baru untuk {symbol}. Data historis tetap menggunakan yang lama.")
+                    logging.info(
+                        f"Tidak ada data baru untuk {symbol}. Data historis tetap menggunakan yang lama."
+                    )
                     return offline_data
             else:
                 self._save_offline_data(symbol, new_data)
-                self.cached_data[symbol] = {'data': new_data, 'timestamp': time.time()}
+                self.cached_data[symbol] = {"data": new_data, "timestamp": time.time()}
                 logging.info(f"Data historis untuk {symbol} berhasil diperbarui.")
                 return new_data
         except Exception as e:
             logging.error(f"Error saat mengambil data historis untuk {symbol}: {e}")
             return offline_data if not offline_data.empty else pd.DataFrame()
 
-    def calculate_dynamic_price(self, symbol: str, multiplier: float, tolerance: float = 0.01) -> float:
+    def calculate_dynamic_price(
+        self, symbol: str, multiplier: float, tolerance: float = 0.01
+    ) -> float:
         """Menghitung harga dinamis dengan toleransi margin untuk meminimalkan hold."""
         try:
-            logging.info(f"Menghitung harga dinamis untuk {symbol} dengan toleransi {tolerance}...")
+            logging.info(
+                f"Menghitung harga dinamis untuk {symbol} dengan toleransi {tolerance}..."
+            )
             historical_data = self.get_historical_data(symbol)
             if historical_data.empty:
-                logging.warning(f"Tidak ada data historis untuk {symbol}. Menggunakan harga 0.")
+                logging.warning(
+                    f"Tidak ada data historis untuk {symbol}. Menggunakan harga 0."
+                )
                 return 0.0
 
-            prices = historical_data['close'].values
+            prices = historical_data["close"].values
             dynamic_price = prices.mean() * multiplier
-            logging.info(f"Harga dinamis untuk {symbol} berhasil dihitung: {dynamic_price}")
+            logging.info(
+                f"Harga dinamis untuk {symbol} berhasil dihitung: {dynamic_price}"
+            )
 
             # Adjust the dynamic price with a tolerance margin
             adjusted_price = dynamic_price * (1 + tolerance)
@@ -144,7 +187,9 @@ class CryptoPriceChecker:
     def log_balance(self):
         """Mencetak saldo saat ini ke log."""
         try:
-            balance = self.client.get_asset_balance(asset='USDT')  # Ganti dengan aset yang relevan
+            balance = self.client.get_asset_balance(
+                asset="USDT"
+            )  # Ganti dengan aset yang relevan
             if balance:
                 logging.info(f"Saldo USDT saat ini: {balance['free']}")
             else:
@@ -168,8 +213,10 @@ class CryptoPriceChecker:
             if data is None:
                 logging.error(f"Gagal mengambil harga saat ini untuk {symbol}.")
                 return 0.0
-            current_price = float(data['price'])
-            logging.info(f"Harga saat ini untuk {symbol} berhasil diambil: {current_price}")
+            current_price = float(data["price"])
+            logging.info(
+                f"Harga saat ini untuk {symbol} berhasil diambil: {current_price}"
+            )
             return current_price
         except Exception as e:
             logging.error(f"Error saat mengambil harga saat ini untuk {symbol}: {e}")
@@ -182,17 +229,25 @@ class CryptoPriceChecker:
             sell_price = self.calculate_dynamic_sell_price(symbol)
             current_price = self.get_current_price(symbol)
 
-            logging.info(f"Buy price: {buy_price}, Sell price: {sell_price}, Current price: {current_price}")
+            logging.info(
+                f"Buy price: {buy_price}, Sell price: {sell_price}, Current price: {current_price}"
+            )
 
-            if current_price < buy_price and not latest_activity.get('buy', False):
-                logging.info(f"Harga saat ini untuk {symbol} lebih rendah dari harga beli: {current_price} < {buy_price}. Aksi: BUY")
-                return 'BUY', current_price
-            elif current_price > sell_price and latest_activity.get('buy', False):
-                logging.info(f"Harga saat ini untuk {symbol} lebih tinggi dari harga jual: {current_price} > {sell_price}. Aksi: SELL")
-                return 'SELL', current_price
+            if current_price < buy_price and not latest_activity.get("buy", False):
+                logging.info(
+                    f"Harga saat ini untuk {symbol} lebih rendah dari harga beli: {current_price} < {buy_price}. Aksi: BUY"
+                )
+                return "BUY", current_price
+            elif current_price > sell_price and latest_activity.get("buy", False):
+                logging.info(
+                    f"Harga saat ini untuk {symbol} lebih tinggi dari harga jual: {current_price} > {sell_price}. Aksi: SELL"
+                )
+                return "SELL", current_price
             else:
-                logging.info(f"Harga saat ini untuk {symbol} berada di antara harga beli dan harga jual: {current_price}. Aksi: HOLD")
-                return 'HOLD', current_price
+                logging.info(
+                    f"Harga saat ini untuk {symbol} berada di antara harga beli dan harga jual: {current_price}. Aksi: HOLD"
+                )
+                return "HOLD", current_price
         except Exception as e:
             logging.error(f"Error saat memeriksa harga untuk {symbol}: {e}")
             raise ValueError(f"Error saat memeriksa harga untuk {symbol}: {e}")

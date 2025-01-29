@@ -1,0 +1,88 @@
+# Log Changes for main.py  
+  
+## Date: 2025-01-27  
+  
+### Issue:  
+Logs are not being written to logs/bot/bot.log, but are being written to the console.  
+  
+### Steps Taken:  
+  
+1. **Verify Directory Structure**:  
+   - Ensure that the `logs/bot` directory exists.  
+   - Command: `mkdir -p logs/bot`  
+  
+2. **Check Permissions**:  
+   - Ensure that the application has write permissions to the `logs/bot` directory and the `bot.log` file.  
+   - Command: `chmod -R 755 logs`  
+  
+3. **Update Logging Configuration**:  
+   - Ensure the logging configuration in `main.py` points to `logs/bot/bot.log`.  
+   - Updated code snippet:  
+     ```
+
+
+# Log Changes for Logging Utility
+
+## Date: 2025-01-27
+
+### Issue:
+Logging configuration was insufficient for a professional-grade trading bot, with limited logging capabilities and poor file management.
+
+### Improvements in `src/utils.py`
+
+1. **Enhanced Logging Configuration**:
+   - Implemented comprehensive logging utility with multiple handlers
+   - Added file and console logging support
+   - Introduced log rotation to manage file sizes
+   - Improved log formatting with detailed context
+
+2. **Key Features Added**:
+   - `setup_logger()` function for global logging configuration
+   - Flexible log level and directory configuration
+   - Automatic log directory creation
+   - Rotating file handler with size and backup count management
+   - Detailed log formatter including:
+     * Timestamp
+     * Logger name
+     * Log level
+     * Filename
+     * Line number
+
+3. **New Utility Functions**:
+   - `get_module_logger()` for module-specific logging
+   - `LoggerMixin` for easy logging integration in classes
+
+### Code Complexity and Design Improvements
+- Added type hints for better type safety
+- Comprehensive docstrings explaining function behaviors
+- Modular design supporting multiple logging scenarios
+- Prevention of duplicate log handlers
+- Supports custom log levels and naming
+
+### Recommended Usage
+```python
+# Global logging setup
+from utils import setup_logger
+logger = setup_logger(name='trading_bot', log_level=logging.DEBUG)
+
+# Module-specific logger
+from utils import get_module_logger
+module_logger = get_module_logger('strategy', log_level=logging.INFO)
+
+# Using LoggerMixin in classes
+from utils import LoggerMixin
+
+class TradingStrategy(LoggerMixin):
+    def execute_trade(self):
+        self.logger.info("Executing trade")
+```
+
+### Future Considerations
+- Potential expansion of logging configurations
+- Support for more advanced logging backends
+- Integration with monitoring and alerting systems
+
+### Performance Impact
+- Minimal overhead with efficient log rotation
+- Configurable log levels for different environments
+- Supports both development and production logging needs
