@@ -6,17 +6,12 @@ import logging
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config.settings import settings
+from src.logger import redirect_stdout_stderr
 
-# Konfigurasi logging
-logging.basicConfig(
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    level=logging.DEBUG,  # Mengubah level ke DEBUG untuk log yang lebih detail
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.FileHandler('check_price.log', mode='w'),
-        logging.StreamHandler()  # Menampilkan log juga ke konsol
-    ]
-)
+# Konfigurasi logging yang lebih baik untuk produksi
+log_file_path = "logs/check_price.log"
+os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+redirect_stdout_stderr(log_file_path)
 
 class CryptoPriceChecker:
     BUY_MULTIPLIER = 0.925

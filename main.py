@@ -10,13 +10,7 @@ from watchdog.events import FileSystemEventHandler
 from src.bot import BotTrading
 from config.settings import settings
 from src.notifikasi_telegram import kirim_notifikasi_telegram
-
-# Konfigurasi logging yang lebih baik untuk produksi
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()],
-)
+from src.logger import redirect_stdout_stderr
 
 
 def check_internet_connection(url="http://www.google.com", timeout=5):
@@ -142,6 +136,10 @@ async def main():
 
 
 if __name__ == "__main__":
+    log_file_path = "logs/bot/bot.log"
+    os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+    redirect_stdout_stderr(log_file_path)
+
     try:
         # Menjalankan aplikasi secara asinkron menggunakan asyncio
         asyncio.run(main())

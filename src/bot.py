@@ -12,16 +12,13 @@ from src.strategy import PriceActionStrategy
 from src.notifikasi_telegram import notifikasi_buy, notifikasi_sell
 from src.check_price import CryptoPriceChecker
 from requests.exceptions import ConnectionError, Timeout
+from src.logger import redirect_stdout_stderr
+
 
 # Konfigurasi logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
-)
+log_file_path = "logs/bot/bot.log"
+os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+redirect_stdout_stderr(log_file_path)
 
 class DataStorage:
     def __init__(self, db_path='bot_trading.db'):

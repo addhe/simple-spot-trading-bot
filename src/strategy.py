@@ -8,9 +8,13 @@ import pickle
 from binance.client import Client
 from config.settings import settings
 from retrying import retry
+from src.logger import redirect_stdout_stderr
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Konfigurasi logging
+log_file_path = "logs/bot/bot.log"
+os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+redirect_stdout_stderr(log_file_path)
 
 class PriceActionStrategy:
     def __init__(self, symbol: str, use_testnet=False):
