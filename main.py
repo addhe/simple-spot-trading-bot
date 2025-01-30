@@ -61,9 +61,18 @@ def setup_database():
 
 setup_database()
 
+def get_symbol_step_size(symbol):
+    try:
+        info = client.get_symbol_info(symbol)
+        for f in info['filters']:
+            if f['filterType'] == 'LOT_SIZE':
+                return float(f['stepSize'])
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan stepSize untuk {symbol}: {e}")
+    return None
+
 def round_quantity(quantity, step_size):
-    precision = int(abs(math.log10(step_size)))
-    return round(math.floor(quantity / step_size) * step_size, precision)
+    return math.floor(quantity / step_size) * step_size
 
 def save_transaction(symbol, type, quantity, price):
     try:
@@ -145,10 +154,8 @@ def sell_asset(symbol, quantity):
         return None
 
 def trade():
-    logging.info("Memulai proses trading...")
     while True:
         usdt_free, asset_balances = get_balances()
-        logging.info(f"Saldo USDT: {usdt_free}, Saldo aset: {asset_balances}")
 
         if usdt_free > 0:
             usdt_per_symbol = usdt_free / len(SYMBOLS)
@@ -157,24 +164,22 @@ def trade():
 
         for symbol in SYMBOLS:
             last_price = get_last_price(symbol)
-            logging.info(f"Harga terakhir untuk {symbol}: {last_price}")
             if last_price is None:
                 continue
 
             asset = symbol.replace('USDT', '')
             asset_balance = asset_balances.get(asset, 0.0)
-            logging.info(f"Saldo {asset}: {asset_balance}")
 
             if asset_balance == 0.0:
                 quantity = usdt_per_symbol * BUY_MULTIPLIER / last_price
+                step_size = get_symbol_step_size(symbol)
+                if step_size:
+                    quantity = round_quantity(quantity, step_size)
                 if quantity > 0:
-                    logging.info(f"Menyiapkan pembelian untuk {symbol} dengan jumlah {quantity}")
                     buy_asset(symbol, quantity)
             else:
                 last_buy_price = get_last_buy_price(symbol)
-                logging.info(f"Harga beli terakhir untuk {symbol}: {last_buy_price}")
                 if last_buy_price and last_price >= last_buy_price * SELL_MULTIPLIER:
-                    logging.info(f"Menyiapkan penjualan untuk {symbol} dengan jumlah {asset_balance}")
                     sell_asset(symbol, asset_balance)
 
         time.sleep(CACHE_LIFETIME)
