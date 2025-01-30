@@ -1,78 +1,127 @@
 import os
 import logging
+import sqlite3
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
-from src.send_telegram_message import send_telegram_message
 
-# Konfigurasi logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
-                    filename='sell_all_assets.log', filemode='w')  # Menyimpan log ke file
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename='logs/bot/sell_all_assets.log',
+    filemode='a'
+)
 
-# Mengambil variabel lingkungan
-API_KEY = os.environ['API_KEY_SPOT_TESTNET_BINANCE']
-API_SECRET = os.environ['API_SECRET_SPOT_TESTNET_BINANCE']
-BASE_URL = 'https://testnet.binance.vision/api'
+# Environment variables
+API_KEY = os.getenv('API_KEY_SPOT_TESTNET_BINANCE', '')
+API_SECRET = os.getenv('API_SECRET_SPOT_TESTNET_BINANCE', '')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
+TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID', '')
 
-# Inisialisasi klien Binance
+# Initialize Binance client
 client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
 
+# Trading pairs to monitor
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
-def sell_all_assets():
+def get_db_connection():
+    return sqlite3.connect('table_transactions.db')
+
+def save_transaction(symbol, type, quantity, price):
     try:
-        # Cek koneksi dengan API
-        logging.info("Menghubungkan ke Binance Testnet...")
-        server_time = client.get_server_time()
-        logging.info(f"Waktu server: {server_time['serverTime']}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO transactions (timestamp, symbol, type, quantity, price)
+            VALUES (strftime('%Y-%m-%d %H:%M:%S', 'now'), ?, ?, ?, ?)
+        ''', (symbol, type, quantity, price))
+        conn.commit()
+        conn.close()
+        logging.info(f"Transaksi {type} {quantity} {symbol} pada harga {price} disimpan ke database")
+    except sqlite3.Error as e:
+        logging.error(f"Gagal menyimpan transaksi ke database: {e}")
 
-        for symbol in SYMBOLS:
-            asset = symbol[:-4]  # Mengambil nama aset (misalnya BTC dari BTCUSDT)
-            balance = client.get_asset_balance(asset=asset)
-
-            if balance and float(balance['free']) > 0:
-                quantity = float(balance['free'])  # Mengambil jumlah yang tersedia untuk dijual
-                logging.info(f"Mencoba menjual {quantity} {asset} untuk {symbol}...")
-
-                # Membuat order jual
-                response = client.order_market_sell(
-                    symbol=symbol,
-                    quantity=quantity
-                )
-
-                # Menyusun informasi order yang berhasil
-                order_info = {
-                    'symbol': response['symbol'],
-                    'orderId': response['orderId'],
-                    'executedQty': response['executedQty'],
-                    'cummulativeQuoteQty': response['cummulativeQuoteQty'],
-                    'status': response['status'],
-                    'fills': response['fills']
-                }
-
-                # Log hasil penjualan
-                logging.info(f"Order jual berhasil untuk {asset}:")
-                logging.info(f"  - Order ID: {order_info['orderId']}")
-                logging.info(f"  - Jumlah yang dieksekusi: {order_info['executedQty']} {asset}")
-                logging.info(f"  - Total nilai transaksi: {order_info['cummulativeQuoteQty']} USDT")
-                logging.info(f"  - Status: {order_info['status']}")
-                for fill in order_info['fills']:
-                    logging.info(f"    - Harga: {fill['price']} USDT, Jumlah: {fill['qty']} {asset}")
-
-                # Kirim pesan Telegram
-                message = (
-                    f"Order jual berhasil untuk {asset}:\n"
-                    f"  - Order ID: {order_info['orderId']}\n"
-                    f"  - Jumlah yang dieksekusi: {order_info['executedQty']} {asset}\n"
-                    f"  - Total nilai transaksi: {order_info['cummulativeQuoteQty']} USDT\n"
-                    f"  - Status: {order_info['status']}"
-                )
-                send_telegram_message(message)
-
-            else:
-                logging.info(f"Tidak ada saldo untuk {asset}.")
-
+def sell_asset(symbol, quantity):
+    try:
+        # Get precision requirements for the symbol
+        symbol_info = client.get_symbol_info(symbol)
+        lot_size_filter = next(filter(lambda x: x['filterType'] == 'LOT_SIZE', symbol_info['filters']))
+        step_size = float(lot_size_filter['stepSize'])
+        precision = len(str(step_size).split('.')[-1].rstrip('0'))
+        
+        # Round quantity according to symbol's precision
+        quantity = round(quantity, precision)
+        
+        if quantity > 0:
+            order = client.order_market_sell(
+                symbol=symbol,
+                quantity=quantity
+            )
+            price = float(order['fills'][0]['price'])
+            logging.info(f"Berhasil menjual {quantity} {symbol} pada harga {price}")
+            save_transaction(symbol, 'sell', quantity, price)
+            return True
+    except BinanceAPIException as e:
+        logging.error(f"Binance API error saat menjual {symbol}: {e}")
+    except BinanceOrderException as e:
+        logging.error(f"Order error saat menjual {symbol}: {e}")
     except Exception as e:
-        logging.error(f"Terjadi kesalahan: {e}")
+        logging.error(f"Error tidak terduga saat menjual {symbol}: {e}")
+    return False
+
+def get_current_balances():
+    try:
+        account = client.get_account()
+        # Filter only assets with non-zero balances
+        balances = {}
+        for balance in account['balances']:
+            free_balance = float(balance['free'])
+            if free_balance > 0:
+                balances[balance['asset']] = free_balance
+        return balances
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan saldo: {e}")
+        return {}
+
+def sell_all_assets():
+    logging.info("Memulai proses penjualan semua aset...")
+    
+    # Get current balances
+    balances = get_current_balances()
+    
+    if not balances:
+        logging.info("Tidak ada saldo yang tersedia untuk dijual")
+        return
+    
+    # Sell each asset
+    for symbol in SYMBOLS:
+        asset = symbol.replace('USDT', '')
+        balance = balances.get(asset, 0.0)
+        
+        if balance > 0:
+            logging.info(f"Mencoba menjual {balance} {asset}")
+            if sell_asset(symbol, balance):
+                logging.info(f"Berhasil menjual semua {asset}")
+            else:
+                logging.error(f"Gagal menjual {asset}")
+
+def main():
+    try:
+        # Check if API credentials are available
+        if not API_KEY or not API_SECRET:
+            raise ValueError("API Key dan Secret tidak ditemukan! Pastikan telah diatur di environment variables.")
+        
+        # Execute sell all
+        sell_all_assets()
+        
+        # Get final balances to confirm
+        final_balances = get_current_balances()
+        logging.info(f"Saldo akhir setelah penjualan: {final_balances}")
+        
+    except Exception as e:
+        logging.error(f"Error dalam proses penjualan: {e}")
+    finally:
+        logging.info("Proses penjualan selesai")
 
 if __name__ == "__main__":
-    sell_all_assets()
+    main()
