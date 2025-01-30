@@ -4,6 +4,7 @@ import logging
 import sqlite3
 import threading
 import math
+from datetime import datetime
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from src.send_telegram_message import send_telegram_message
@@ -34,6 +35,7 @@ CACHE_LIFETIME = 300
 BUY_MULTIPLIER = 0.925
 SELL_MULTIPLIER = 1.03
 TOLERANCE = 0.01
+STATUS_INTERVAL = 3600  # 1 jam dalam detik
 
 # Inisialisasi klien Binance
 client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
@@ -123,6 +125,54 @@ def get_balances():
         logging.error(f"Gagal mendapatkan saldo: {e}")
         return 0.0, {}
 
+def send_asset_status():
+    """Mengirim status aset saat ini ke Telegram."""
+    try:
+        usdt_free, asset_balances = get_balances()
+
+        # Menyiapkan pesan status
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status_message = f"🔄 Status Aset ({current_time})\n\n"
+        status_message += f"💵 USDT: {usdt_free:.2f}\n\n"
+
+        total_value_usdt = usdt_free
+
+        # Menambahkan informasi untuk setiap aset
+        for symbol in SYMBOLS:
+            asset = symbol.replace('USDT', '')
+            balance = asset_balances.get(asset, 0.0)
+            last_price = get_last_price(symbol)
+
+            if last_price:
+                value_usdt = balance * last_price
+                total_value_usdt += value_usdt
+
+                last_buy_price = get_last_buy_price(symbol)
+                profit_loss = ""
+                if last_buy_price and balance > 0:
+                    pl_percent = ((last_price - last_buy_price) / last_buy_price) * 100
+                    profit_loss = f"(P/L: {pl_percent:.2f}%)"
+
+                status_message += f"🪙 {asset}:\n"
+                status_message += f"   Jumlah: {balance:.8f}\n"
+                status_message += f"   Harga: {last_price:.2f} USDT\n"
+                status_message += f"   Nilai: {value_usdt:.2f} USDT {profit_loss}\n\n"
+
+        status_message += f"💰 Total Nilai Portfolio: {total_value_usdt:.2f} USDT"
+
+        # Mengirim pesan ke Telegram
+        send_telegram_message(status_message)
+        logging.info("Status aset berhasil dikirim ke Telegram")
+
+    except Exception as e:
+        logging.error(f"Gagal mengirim status aset: {e}")
+
+def status_monitor():
+    """Thread terpisah untuk memantau dan mengirim status setiap jam."""
+    while True:
+        send_asset_status()
+        time.sleep(STATUS_INTERVAL)
+
 def buy_asset(symbol, quantity):
     try:
         order = client.order_market_buy(
@@ -184,10 +234,17 @@ def trade():
 
         time.sleep(CACHE_LIFETIME)
 
-
 def main():
+    # Memulai thread untuk monitoring status
+    status_thread = threading.Thread(target=status_monitor, daemon=True)
+    status_thread.start()
+
+    # Memulai thread untuk trading
     trade_thread = threading.Thread(target=trade, daemon=True)
     trade_thread.start()
+
+    # Menunggu kedua thread selesai
+    status_thread.join()
     trade_thread.join()
 
 if __name__ == "__main__":
