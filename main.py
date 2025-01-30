@@ -41,6 +41,13 @@ STATUS_INTERVAL = 3600  # 1 jam dalam detik
 # Inisialisasi klien Binance
 client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
 
+# Status aplikasi
+app_status = {
+    'trade_thread': True,
+    'status_thread': True,
+    'cleanup_thread': True
+}
+
 def get_db_connection():
     conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
     return conn
@@ -410,6 +417,7 @@ def trade():
 
         except Exception as e:
             logging.error(f"Error dalam fungsi trade: {e}")
+            app_status['trade_thread'] = False  # Menandai thread trading tidak aktif
 
         time.sleep(CACHE_LIFETIME)
 
@@ -419,10 +427,25 @@ def status_monitor():
         send_asset_status()
         time.sleep(STATUS_INTERVAL)
 
+def check_app_status():
+    """Memeriksa status aplikasi dan mengirim notifikasi jika ada masalah."""
+    while True:
+        if not all(app_status.values()):
+            logging.error("Salah satu thread tidak aktif! Memeriksa kembali...")
+            send_telegram_message("⚠️ Peringatan: Salah satu thread tidak aktif! Silakan periksa aplikasi.")
+        time.sleep(600)  # Cek setiap 10 menit
+
+def cleanup_monitor():
+    """Thread untuk membersihkan data lama secara periodik"""
+    while True:
+        cleanup_old_data()
+        time.sleep(3600)  # Bersihkan setiap jam
+
 def main():
     setup_database()
     for symbol in SYMBOLS:
         update_historical_data(symbol)
+
     # Memulai thread untuk monitoring status
     status_thread = threading.Thread(target=status_monitor, daemon=True)
     status_thread.start()
@@ -435,10 +458,15 @@ def main():
     cleanup_thread = threading.Thread(target=cleanup_monitor, daemon=True)
     cleanup_thread.start()
 
+    # Memulai thread untuk pengecekan status aplikasi
+    status_check_thread = threading.Thread(target=check_app_status, daemon=True)
+    status_check_thread.start()
+
     # Menunggu kedua thread selesai
     status_thread.join()
     trade_thread.join()
     cleanup_thread.join()
+    status_check_thread.join()
 
 if __name__ == "__main__":
     main()
