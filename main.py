@@ -14,11 +14,11 @@ log_directory = 'logs/bot'
 if not os.path.exists(log_directory):
     os.makedirs(log_directory)
 
-# Konfigurasi logging untuk menulis ke file di folder logs/bot
+# Konfigurasi logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
                     filename=os.path.join(log_directory, 'bot.log'), filemode='a')
 
-# Mengambil variabel lingkungan dengan fallback default
+# Mengambil variabel lingkungan
 API_KEY = os.getenv('API_KEY_SPOT_TESTNET_BINANCE', '')
 API_SECRET = os.getenv('API_SECRET_SPOT_TESTNET_BINANCE', '')
 BASE_URL = 'https://testnet.binance.vision/api'
@@ -29,9 +29,10 @@ if not API_KEY or not API_SECRET:
     logging.error("API Key dan Secret tidak ditemukan! Pastikan telah diatur di environment variables.")
     exit(1)
 
+# Konfigurasi trading
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 INTERVAL = '1m'
-CACHE_LIFETIME = 300
+CACHE_LIFETIME = 300  # 5 menit
 BUY_MULTIPLIER = 0.925
 SELL_MULTIPLIER = 1.03
 TOLERANCE = 0.01
@@ -40,7 +41,6 @@ STATUS_INTERVAL = 3600  # 1 jam dalam detik
 # Inisialisasi klien Binance
 client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
 
-# Inisialisasi koneksi database SQLite dengan per thread connection
 def get_db_connection():
     conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
     return conn
@@ -125,19 +125,65 @@ def get_balances():
         logging.error(f"Gagal mendapatkan saldo: {e}")
         return 0.0, {}
 
+def should_buy(symbol, current_price):
+    """
+    Menganalisis tren harga untuk menentukan apakah ini waktu yang tepat untuk membeli.
+    """
+    try:
+        # Ambil data candlestick 1 jam terakhir
+        klines = client.get_historical_klines(symbol, Client.KLINE_INTERVAL_1MINUTE, "1 hour ago UTC")
+
+        # Ekstrak closing prices dan volume
+        prices = [float(k[4]) for k in klines]  # Closing prices
+        volumes = [float(k[5]) for k in klines]  # Volumes
+
+        if not prices or not volumes:
+            return False
+
+        # Hitung indikator teknikal sederhana
+        avg_price = sum(prices) / len(prices)
+        avg_volume = sum(volumes) / len(volumes)
+        latest_volume = volumes[-1]
+
+        # Kondisi untuk membeli:
+        # 1. Harga saat ini lebih rendah dari rata-rata (potensi oversold)
+        price_condition = current_price < avg_price
+
+        # 2. Volume saat ini lebih tinggi dari rata-rata (menunjukkan momentum)
+        volume_condition = latest_volume > avg_volume
+
+        # 3. Tren harga menurun melambat
+        price_changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+        recent_changes = price_changes[-10:]  # 10 menit terakhir
+        trend_slowing = sum(recent_changes) > sum(price_changes[-20:-10])  # Dibandingkan dengan 10 menit sebelumnya
+
+        # Logging untuk debugging
+        logging.info(f"""
+        Analisis {symbol}:
+        Harga saat ini: {current_price}
+        Rata-rata harga: {avg_price}
+        Volume saat ini: {latest_volume}
+        Rata-rata volume: {avg_volume}
+        Tren melambat: {trend_slowing}
+        """)
+
+        # Kembalikan True jika semua kondisi terpenuhi
+        return price_condition and volume_condition and trend_slowing
+
+    except Exception as e:
+        logging.error(f"Error checking buy condition for {symbol}: {e}")
+        return False
+
 def send_asset_status():
     """Mengirim status aset saat ini ke Telegram."""
     try:
         usdt_free, asset_balances = get_balances()
-
-        # Menyiapkan pesan status
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         status_message = f"🔄 Status Aset ({current_time})\n\n"
         status_message += f"💵 USDT: {usdt_free:.2f}\n\n"
 
         total_value_usdt = usdt_free
 
-        # Menambahkan informasi untuk setiap aset
         for symbol in SYMBOLS:
             asset = symbol.replace('USDT', '')
             balance = asset_balances.get(asset, 0.0)
@@ -160,18 +206,11 @@ def send_asset_status():
 
         status_message += f"💰 Total Nilai Portfolio: {total_value_usdt:.2f} USDT"
 
-        # Mengirim pesan ke Telegram
         send_telegram_message(status_message)
         logging.info("Status aset berhasil dikirim ke Telegram")
 
     except Exception as e:
         logging.error(f"Gagal mengirim status aset: {e}")
-
-def status_monitor():
-    """Thread terpisah untuk memantau dan mengirim status setiap jam."""
-    while True:
-        send_asset_status()
-        time.sleep(STATUS_INTERVAL)
 
 def buy_asset(symbol, quantity):
     try:
@@ -205,34 +244,48 @@ def sell_asset(symbol, quantity):
 
 def trade():
     while True:
-        usdt_free, asset_balances = get_balances()
+        try:
+            usdt_free, asset_balances = get_balances()
 
-        if usdt_free > 0:
-            usdt_per_symbol = usdt_free / len(SYMBOLS)
-        else:
-            usdt_per_symbol = 0
-
-        for symbol in SYMBOLS:
-            last_price = get_last_price(symbol)
-            if last_price is None:
-                continue
-
-            asset = symbol.replace('USDT', '')
-            asset_balance = asset_balances.get(asset, 0.0)
-
-            if asset_balance == 0.0:
-                quantity = usdt_per_symbol * BUY_MULTIPLIER / last_price
-                step_size = get_symbol_step_size(symbol)
-                if step_size:
-                    quantity = round_quantity(quantity, step_size)
-                if quantity > 0:
-                    buy_asset(symbol, quantity)
+            if usdt_free > 0:
+                usdt_per_symbol = usdt_free / len(SYMBOLS)
             else:
-                last_buy_price = get_last_buy_price(symbol)
-                if last_buy_price and last_price >= last_buy_price * SELL_MULTIPLIER:
-                    sell_asset(symbol, asset_balance)
+                usdt_per_symbol = 0
+
+            for symbol in SYMBOLS:
+                last_price = get_last_price(symbol)
+                if last_price is None:
+                    continue
+
+                asset = symbol.replace('USDT', '')
+                asset_balance = asset_balances.get(asset, 0.0)
+
+                if asset_balance == 0.0:
+                    # Tambahkan analisis tren sebelum membeli
+                    if should_buy(symbol, last_price):
+                        quantity = usdt_per_symbol * BUY_MULTIPLIER / last_price
+                        step_size = get_symbol_step_size(symbol)
+                        if step_size:
+                            quantity = round_quantity(quantity, step_size)
+                        if quantity > 0:
+                            buy_asset(symbol, quantity)
+                    else:
+                        logging.info(f"Kondisi membeli belum tepat untuk {symbol}")
+                else:
+                    last_buy_price = get_last_buy_price(symbol)
+                    if last_buy_price and last_price >= last_buy_price * SELL_MULTIPLIER:
+                        sell_asset(symbol, asset_balance)
+
+        except Exception as e:
+            logging.error(f"Error dalam fungsi trade: {e}")
 
         time.sleep(CACHE_LIFETIME)
+
+def status_monitor():
+    """Thread terpisah untuk memantau dan mengirim status setiap jam."""
+    while True:
+        send_asset_status()
+        time.sleep(STATUS_INTERVAL)
 
 def main():
     # Memulai thread untuk monitoring status
