@@ -9,6 +9,8 @@ __pycache__/
 *.so
 *.db
 
+venv
+
 # Distribution / packaging
 .Python
 build/
