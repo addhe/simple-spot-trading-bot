@@ -4,7 +4,9 @@ import logging
 import sqlite3
 import threading
 import math
-from datetime import datetime
+import numpy as np
+import pandas as pd
+from datetime import datetime, timedelta
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from src.send_telegram_message import send_telegram_message
@@ -47,6 +49,184 @@ app_status = {
     'status_thread': True,
     'cleanup_thread': True
 }
+
+def save_historical_data(symbol, klines):
+    """Enhanced historical data saving with data validation"""
+    try:
+        conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
+        cursor = conn.cursor()
+
+        # Data validation
+        validated_klines = [
+            kline for kline in klines
+            if _validate_kline_data(kline)
+        ]
+
+        for kline in validated_klines:
+            timestamp = datetime.fromtimestamp(kline[0]/1000).strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute('''
+                INSERT OR REPLACE INTO historical_data
+                (symbol, timestamp, open_price, high_price, low_price, close_price, volume)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                symbol,
+                timestamp,
+                float(kline[1]),  # open
+                float(kline[2]),  # high
+                float(kline[3]),  # low
+                float(kline[4]),  # close
+                float(kline[5])   # volume
+            ))
+
+        conn.commit()
+        conn.close()
+        logging.info(f"Saved {len(validated_klines)} validated historical data points for {symbol}")
+
+    except sqlite3.Error as e:
+        logging.error(f"Failed to save historical data: {e}")
+
+def _validate_kline_data(kline):
+    """Validate individual kline data point"""
+    try:
+        # Check data types and ranges
+        float_values = [
+            float(kline[1]),  # open
+            float(kline[2]),  # high
+            float(kline[3]),  # low
+            float(kline[4]),  # close
+            float(kline[5])   # volume
+        ]
+
+        # Validate price and volume
+        if (
+            float_values[1] >= float_values[3] and  # high >= close
+            float_values[2] <= float_values[3] and  # low <= close
+            float_values[5] >= 0  # volume non-negative
+        ):
+            return True
+
+    except (ValueError, TypeError):
+        pass
+
+    return False
+
+def update_historical_data(symbol, client, extended_analysis=True):
+    """Advanced historical data update with multi-timeframe support"""
+    try:
+        conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
+        cursor = conn.cursor()
+
+        # Fetch last recorded timestamp
+        cursor.execute('''
+            SELECT timestamp FROM historical_data
+            WHERE symbol = ? ORDER BY timestamp DESC LIMIT 1
+        ''', (symbol,))
+        last_record = cursor.fetchone()
+
+        # Determine start time for data retrieval
+        if last_record:
+            last_timestamp = datetime.strptime(last_record[0], '%Y-%m-%d %H:%M:%S')
+            start_time = int(last_timestamp.timestamp() * 1000)
+        else:
+            # If no previous data, fetch last 7 days
+            start_time = int((datetime.now() - timedelta(days=7)).timestamp() * 1000)
+
+        # Multi-timeframe intervals
+        intervals = [
+            client.KLINE_INTERVAL_1MINUTE,
+            client.KLINE_INTERVAL_15MINUTE,
+            client.KLINE_INTERVAL_1HOUR
+        ]
+
+        for interval in intervals:
+            klines = client.get_historical_klines(
+                symbol,
+                interval,
+                start_str=start_time
+            )
+            save_historical_data(symbol, klines)
+
+        conn.close()
+
+        if extended_analysis:
+            _perform_extended_analysis(symbol)
+
+        return True
+
+    except Exception as e:
+        logging.error(f"Failed to update historical data for {symbol}: {e}")
+        return False
+
+def should_buy(symbol, current_price, advanced_indicators=True):
+    """Advanced buying decision with multiple technical indicators"""
+    try:
+        # Retrieve historical data
+        conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
+        df = pd.read_sql_query(f'''
+            SELECT timestamp, close_price, volume
+            FROM historical_data
+            WHERE symbol = '{symbol}'
+            ORDER BY timestamp DESC
+            LIMIT 500
+        ''', conn)
+        conn.close()
+
+        if len(df) < 50:
+            logging.warning(f"Insufficient data for {symbol}")
+            return False
+
+        # Convert timestamp
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df.set_index('timestamp', inplace=True)
+
+        # Technical Indicators
+        df['MA_50'] = df['close_price'].rolling(window=50).mean()
+        df['MA_200'] = df['close_price'].rolling(window=200).mean()
+        df['RSI'] = _calculate_rsi(df['close_price'])
+
+        latest = df.iloc[-1]
+
+        # Advanced Buy Conditions
+        buy_conditions = [
+            current_price < latest['MA_50'],  # Price below short-term moving average
+            latest['MA_50'] > latest['MA_200'],  # Short-term trend is bullish
+            latest['RSI'] < 30,  # Oversold condition
+            current_price < latest['MA_200'] * 0.95  # Significant discount
+        ]
+
+        # Volume confirmation
+        volume_spike = df['volume'].tail(10).mean() * 1.5 < df['volume'].iloc[-1]
+
+        logging.info(f"""
+        {symbol} Buy Analysis:
+        Current Price: {current_price}
+        50-Day MA: {latest['MA_50']}
+        200-Day MA: {latest['MA_200']}
+        RSI: {latest['RSI']}
+        Volume Spike: {volume_spike}
+        Buy Signals Met: {sum(buy_conditions)}/4
+        """)
+
+        return sum(buy_conditions) >= 3 and volume_spike
+
+    except Exception as e:
+        logging.error(f"Buy condition analysis failed for {symbol}: {e}")
+        return False
+
+def _calculate_rsi(prices, periods=14):
+    """Calculate Relative Strength Index"""
+    delta = prices.diff()
+
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(window=periods).mean()
+    avg_loss = loss.rolling(window=periods).mean()
+
+    relative_strength = avg_gain / avg_loss
+    rsi = 100.0 - (100.0 / (1.0 + relative_strength))
+
+    return rsi
 
 def get_db_connection():
     conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
@@ -204,34 +384,6 @@ def trade():
 
         time.sleep(CACHE_LIFETIME)
 
-def save_historical_data(symbol, klines):
-    """Menyimpan data historical ke database"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        for kline in klines:
-            timestamp = datetime.fromtimestamp(kline[0]/1000).strftime('%Y-%m-%d %H:%M:%S')
-            cursor.execute('''
-                INSERT OR REPLACE INTO historical_data
-                (symbol, timestamp, open_price, high_price, low_price, close_price, volume)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                symbol,
-                timestamp,
-                float(kline[1]),  # open
-                float(kline[2]),  # high
-                float(kline[3]),  # low
-                float(kline[4]),  # close
-                float(kline[5])   # volume
-            ))
-
-        conn.commit()
-        conn.close()
-        logging.info(f"Berhasil menyimpan {len(klines)} data historis untuk {symbol}")
-    except sqlite3.Error as e:
-        logging.error(f"Gagal menyimpan data historis: {e}")
-
 def get_cached_historical_data(symbol, minutes=60):
     """Mengambil data historis dari cache"""
     try:
@@ -254,43 +406,7 @@ def get_cached_historical_data(symbol, minutes=60):
         logging.error(f"Gagal mengambil data historis dari cache: {e}")
         return []
 
-def update_historical_data(symbol):
-    """Update data historis"""
-    try:
-        # Ambil data terakhir dari cache
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT timestamp
-            FROM historical_data
-            WHERE symbol = ?
-            ORDER BY timestamp DESC
-            LIMIT 1
-        ''', (symbol,))
-        last_record = cursor.fetchone()
-        conn.close()
 
-        # Jika ada data di cache, ambil data sejak timestamp terakhir
-        if last_record:
-            last_timestamp = datetime.strptime(last_record[0], '%Y-%m-%d %H:%M:%S')
-            start_time = int(last_timestamp.timestamp() * 1000)
-        else:
-            # Jika tidak ada data, ambil 1 jam terakhir
-            start_time = int((time.time() - 3600) * 1000)
-
-        # Ambil data baru dari Binance
-        klines = client.get_historical_klines(
-            symbol,
-            Client.KLINE_INTERVAL_1MINUTE,
-            start_str=start_time
-        )
-
-        if klines:
-            save_historical_data(symbol, klines)
-            return True
-    except Exception as e:
-        logging.error(f"Gagal update historical data untuk {symbol}: {e}")
-    return False
 
 def get_symbol_step_size(symbol):
     try:
@@ -343,58 +459,6 @@ def get_last_price(symbol):
     except BinanceAPIException as e:
         logging.error(f"Gagal mendapatkan harga terakhir untuk {symbol}: {e}")
         return None
-
-
-
-def should_buy(symbol, current_price):
-    """Analisis tren harga dengan data dari cache"""
-    try:
-        # Update historical data
-        update_historical_data(symbol)
-
-        # Ambil data dari cache
-        cached_data = get_cached_historical_data(symbol, minutes=60)
-
-        if not cached_data:
-            logging.warning(f"Tidak ada data historis untuk {symbol}")
-            return False
-
-        # Ekstrak prices dan volumes dari cached data
-        prices = [row[1] for row in cached_data]  # close_price
-        volumes = [row[2] for row in cached_data]  # volume
-
-        if not prices or not volumes:
-            return False
-
-        # Hitung indikator teknikal
-        avg_price = sum(prices) / len(prices)
-        avg_volume = sum(volumes) / len(volumes)
-        latest_volume = volumes[-1]
-
-        # Kondisi untuk membeli
-        price_condition = current_price < avg_price
-        volume_condition = latest_volume > avg_volume
-
-        # Analisis tren harga
-        price_changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-        recent_changes = price_changes[-10:]  # 10 menit terakhir
-        trend_slowing = sum(recent_changes) > sum(price_changes[-20:-10])
-
-        logging.info(f"""
-        Analisis {symbol} (menggunakan data cache):
-        Harga saat ini: {current_price}
-        Rata-rata harga: {avg_price}
-        Volume saat ini: {latest_volume}
-        Rata-rata volume: {avg_volume}
-        Tren melambat: {trend_slowing}
-        Data points dalam cache: {len(cached_data)}
-        """)
-
-        return price_condition and volume_condition and trend_slowing
-
-    except Exception as e:
-        logging.error(f"Error checking buy condition for {symbol}: {e}")
-        return False
 
 def cleanup_old_data():
     """Membersihkan data historis yang lebih dari 24 jam"""
