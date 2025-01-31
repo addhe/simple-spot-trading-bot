@@ -48,6 +48,7 @@ client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
 
 # Status aplikasi
 app_status = {
+    'running': True,
     'trade_thread': True,
     'status_thread': True,
     'cleanup_thread': True
@@ -649,11 +650,29 @@ def check_app_status():
             send_telegram_message("⚠️ Peringatan: Salah satu thread tidak aktif! Silakan periksa aplikasi.")
         time.sleep(600)  # Cek setiap 10 menit
 
-def cleanup_monitor():
-    """Thread untuk membersihkan data lama secara periodik"""
-    while True:
-        cleanup_old_data()
-        time.sleep(3600)  # Bersihkan setiap jam
+def handle_buy_scenario(symbol, last_price, usdt_per_symbol):
+    """Handle buying scenario for a symbol"""
+    if should_buy(symbol, last_price):
+        # Calculate quantity based on available USDT
+        quantity = (usdt_per_symbol * BUY_MULTIPLIER) / last_price
+        step_size = get_symbol_step_size(symbol)
+        if step_size:
+            quantity = round_quantity(quantity, step_size)
+
+        # Check minimum notional
+        min_notional = get_min_notional(symbol)
+        if min_notional and (quantity * last_price) >= min_notional:
+            buy_asset(symbol, quantity)
+        else:
+            logging.info(f"Skipping buy {symbol}: Order size too small")
+    else:
+        logging.info(f"Kondisi membeli belum tepat untuk {symbol}")
+
+def handle_sell_scenario(symbol, last_price, asset_balance):
+    """Handle selling scenario for a symbol"""
+    last_buy_price = get_last_buy_price(symbol)
+    if last_buy_price and last_price >= last_buy_price * SELL_MULTIPLIER:
+        sell_asset(symbol, asset_balance)
 
 def main():
     """Enhanced main function with proper thread management"""
@@ -662,7 +681,7 @@ def main():
     try:
         # Initialize historical data
         for symbol in SYMBOLS:
-            update_historical_data(symbol)
+            update_historical_data(symbol, client)  # Menambahkan parameter client
 
         threads = [
             threading.Thread(target=status_monitor, daemon=True),
