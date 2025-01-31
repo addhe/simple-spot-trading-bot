@@ -34,7 +34,7 @@ SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 INTERVAL = '1m'
 CACHE_LIFETIME = 300  # 5 menit
 BUY_MULTIPLIER = 0.925
-SELL_MULTIPLIER = 1.03
+SELL_MULTIPLIER = 1.011
 TOLERANCE = 0.01
 STATUS_INTERVAL = 3600  # 1 jam dalam detik
 
@@ -232,15 +232,7 @@ def get_last_price(symbol):
         logging.error(f"Gagal mendapatkan harga terakhir untuk {symbol}: {e}")
         return None
 
-def get_balances():
-    try:
-        balances = {b['asset']: float(b['free']) for b in client.get_account()['balances']}
-        usdt_free = balances.get('USDT', 0.0)
-        asset_balances = {sym.replace('USDT', ''): balances.get(sym.replace('USDT', ''), 0.0) for sym in SYMBOLS}
-        return usdt_free, asset_balances
-    except BinanceAPIException as e:
-        logging.error(f"Gagal mendapatkan saldo: {e}")
-        return 0.0, {}
+
 
 def should_buy(symbol, current_price):
     """Analisis tren harga dengan data dari cache"""
@@ -351,16 +343,89 @@ def send_asset_status():
     except Exception as e:
         logging.error(f"Gagal mengirim status aset: {e}")
 
+def get_balances():
+    try:
+        account = client.get_account()
+        balances = {}
+        for balance in account['balances']:
+            asset = balance['asset']
+            free = float(balance['free'])
+            locked = float(balance['locked'])
+            if free > 0 or locked > 0:  # Hanya simpan asset yang memiliki balance
+                balances[asset] = {
+                    'free': free,
+                    'locked': locked,
+                    'total': free + locked
+                }
+        return balances
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan saldo: {e}")
+        return {}
+
+def get_min_notional(symbol):
+    """Mendapatkan minimum notional value yang diizinkan untuk trading"""
+    try:
+        info = client.get_symbol_info(symbol)
+        for f in info['filters']:
+            if f['filterType'] == 'MIN_NOTIONAL':
+                return float(f['minNotional'])
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan min notional untuk {symbol}: {e}")
+    return None
+
+def check_sufficient_balance(symbol, quantity, price, side='BUY'):
+    """
+    Memeriksa apakah balance mencukupi untuk melakukan order
+    Returns: (bool, str) - (is_sufficient, error_message)
+    """
+    balances = get_balances()
+
+    if side == 'BUY':
+        required_usdt = quantity * price
+        available_usdt = balances.get('USDT', {}).get('free', 0)
+
+        if available_usdt < required_usdt:
+            return False, f"Insufficient USDT balance. Required: {required_usdt}, Available: {available_usdt}"
+
+    else:  # SELL
+        asset = symbol.replace('USDT', '')
+        available_asset = balances.get(asset, {}).get('free', 0)
+
+        if available_asset < quantity:
+            return False, f"Insufficient {asset} balance. Required: {quantity}, Available: {available_asset}"
+
+    return True, None
+
 def buy_asset(symbol, quantity):
     try:
+        current_price = float(client.get_symbol_ticker(symbol=symbol)['price'])
+
+        # Periksa minimum notional
+        min_notional = get_min_notional(symbol)
+        if min_notional and (quantity * current_price) < min_notional:
+            logging.error(f"Order {symbol} terlalu kecil. Minimum notional: {min_notional} USDT")
+            return None
+
+        # Periksa balance sebelum order
+        is_sufficient, error_msg = check_sufficient_balance(symbol, quantity, current_price, 'BUY')
+        if not is_sufficient:
+            logging.error(f"Gagal membeli {symbol}: {error_msg}")
+            send_telegram_message(f"Gagal membeli {symbol}: {error_msg}")
+            return None
+
         order = client.order_market_buy(
             symbol=symbol,
             quantity=quantity
         )
-        logging.info(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        send_telegram_message(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        save_transaction(symbol, 'buy', quantity, float(order['fills'][0]['price']))
+
+        actual_price = float(order['fills'][0]['price'])
+        actual_quantity = float(order['executedQty'])
+
+        logging.info(f"Beli {actual_quantity} {symbol} pada harga {actual_price}")
+        send_telegram_message(f"Beli {actual_quantity} {symbol} pada harga {actual_price}")
+        save_transaction(symbol, 'buy', actual_quantity, actual_price)
         return order
+
     except (BinanceAPIException, BinanceOrderException) as e:
         logging.error(f"Gagal membeli {symbol}: {e}")
         send_telegram_message(f"Gagal membeli {symbol}: {e}")
@@ -368,14 +433,34 @@ def buy_asset(symbol, quantity):
 
 def sell_asset(symbol, quantity):
     try:
+        current_price = float(client.get_symbol_ticker(symbol=symbol)['price'])
+
+        # Periksa minimum notional
+        min_notional = get_min_notional(symbol)
+        if min_notional and (quantity * current_price) < min_notional:
+            logging.error(f"Order {symbol} terlalu kecil. Minimum notional: {min_notional} USDT")
+            return None
+
+        # Periksa balance sebelum order
+        is_sufficient, error_msg = check_sufficient_balance(symbol, quantity, current_price, 'SELL')
+        if not is_sufficient:
+            logging.error(f"Gagal menjual {symbol}: {error_msg}")
+            send_telegram_message(f"Gagal menjual {symbol}: {error_msg}")
+            return None
+
         order = client.order_market_sell(
             symbol=symbol,
             quantity=quantity
         )
-        logging.info(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        send_telegram_message(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        save_transaction(symbol, 'sell', quantity, float(order['fills'][0]['price']))
+
+        actual_price = float(order['fills'][0]['price'])
+        actual_quantity = float(order['executedQty'])
+
+        logging.info(f"Jual {actual_quantity} {symbol} pada harga {actual_price}")
+        send_telegram_message(f"Jual {actual_quantity} {symbol} pada harga {actual_price}")
+        save_transaction(symbol, 'sell', actual_quantity, actual_price)
         return order
+
     except (BinanceAPIException, BinanceOrderException) as e:
         logging.error(f"Gagal menjual {symbol}: {e}")
         send_telegram_message(f"Gagal menjual {symbol}: {e}")
@@ -384,10 +469,11 @@ def sell_asset(symbol, quantity):
 def trade():
     while True:
         try:
-            usdt_free, asset_balances = get_balances()
+            balances = get_balances()
+            usdt_balance = balances.get('USDT', {}).get('free', 0)
 
-            if usdt_free > 0:
-                usdt_per_symbol = usdt_free / len(SYMBOLS)
+            if usdt_balance > 0:
+                usdt_per_symbol = usdt_balance / len(SYMBOLS)
             else:
                 usdt_per_symbol = 0
 
@@ -397,27 +483,33 @@ def trade():
                     continue
 
                 asset = symbol.replace('USDT', '')
-                asset_balance = asset_balances.get(asset, 0.0)
+                asset_balance = balances.get(asset, {}).get('free', 0)
 
-                if asset_balance == 0.0:
-                    # Tambahkan analisis tren sebelum membeli
+                if asset_balance == 0 and usdt_per_symbol > 0:
                     if should_buy(symbol, last_price):
-                        quantity = usdt_per_symbol * BUY_MULTIPLIER / last_price
+                        # Hitung quantity berdasarkan available USDT
+                        quantity = (usdt_per_symbol * BUY_MULTIPLIER) / last_price
                         step_size = get_symbol_step_size(symbol)
                         if step_size:
                             quantity = round_quantity(quantity, step_size)
-                        if quantity > 0:
+
+                        # Periksa minimum notional
+                        min_notional = get_min_notional(symbol)
+                        if min_notional and (quantity * last_price) >= min_notional:
                             buy_asset(symbol, quantity)
+                        else:
+                            logging.info(f"Skipping buy {symbol}: Order size too small")
                     else:
                         logging.info(f"Kondisi membeli belum tepat untuk {symbol}")
-                else:
+
+                elif asset_balance > 0:
                     last_buy_price = get_last_buy_price(symbol)
                     if last_buy_price and last_price >= last_buy_price * SELL_MULTIPLIER:
                         sell_asset(symbol, asset_balance)
 
         except Exception as e:
             logging.error(f"Error dalam fungsi trade: {e}")
-            app_status['trade_thread'] = False  # Menandai thread trading tidak aktif
+            app_status['trade_thread'] = False
 
         time.sleep(CACHE_LIFETIME)
 
