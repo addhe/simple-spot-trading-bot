@@ -305,8 +305,34 @@ def cleanup_monitor():
         cleanup_old_data()
         time.sleep(3600)  # Bersihkan setiap jam
 
+def get_balances():
+    """
+    Get account balances from Binance
+    Returns: (float, dict) - (usdt_free, other_balances)
+    """
+    try:
+        account = client.get_account()
+        usdt_free = 0
+        balances = {}
+
+        for balance in account['balances']:
+            asset = balance['asset']
+            free = float(balance['free'])
+            locked = float(balance['locked'])
+
+            if free > 0 or locked > 0:  # Only store assets with balance
+                if asset == 'USDT':
+                    usdt_free = free
+                else:
+                    balances[asset] = free  # We only need free balance for other assets
+
+        return usdt_free, balances
+    except BinanceAPIException as e:
+        logging.error(f"Failed to get balances: {e}")
+        return 0.0, {}
+
 def send_asset_status():
-    """Mengirim status aset saat ini ke Telegram."""
+    """Send current asset status to Telegram."""
     try:
         usdt_free, asset_balances = get_balances()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -342,25 +368,6 @@ def send_asset_status():
 
     except Exception as e:
         logging.error(f"Gagal mengirim status aset: {e}")
-
-def get_balances():
-    try:
-        account = client.get_account()
-        balances = {}
-        for balance in account['balances']:
-            asset = balance['asset']
-            free = float(balance['free'])
-            locked = float(balance['locked'])
-            if free > 0 or locked > 0:  # Hanya simpan asset yang memiliki balance
-                balances[asset] = {
-                    'free': free,
-                    'locked': locked,
-                    'total': free + locked
-                }
-        return balances
-    except BinanceAPIException as e:
-        logging.error(f"Gagal mendapatkan saldo: {e}")
-        return {}
 
 def get_min_notional(symbol):
     """Mendapatkan minimum notional value yang diizinkan untuk trading"""
