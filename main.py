@@ -9,7 +9,15 @@ import pandas as pd
 from datetime import datetime, timedelta
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
+
+from src.get_balances import get_balances
+from src.get_db_connection import get_db_connection
+from src.get_last_buy_price import get_last_buy_price
+from src.get_last_price import get_last_price
+from src.save_historical_data import save_historical_data
+from src.send_asset_status import send_asset_status
 from src.send_telegram_message import send_telegram_message
+from src.status_monitor import status_monitor
 
 # Database connection lock
 db_lock = threading.Lock()
@@ -53,41 +61,6 @@ app_status = {
     'status_thread': True,
     'cleanup_thread': True
 }
-
-def save_historical_data(symbol, klines):
-    """Enhanced historical data saving with data validation"""
-    try:
-        conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
-        cursor = conn.cursor()
-
-        # Data validation
-        validated_klines = [
-            kline for kline in klines
-            if _validate_kline_data(kline)
-        ]
-
-        for kline in validated_klines:
-            timestamp = datetime.fromtimestamp(kline[0]/1000).strftime('%Y-%m-%d %H:%M:%S')
-            cursor.execute('''
-                INSERT OR REPLACE INTO historical_data
-                (symbol, timestamp, open_price, high_price, low_price, close_price, volume)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                symbol,
-                timestamp,
-                float(kline[1]),  # open
-                float(kline[2]),  # high
-                float(kline[3]),  # low
-                float(kline[4]),  # close
-                float(kline[5])   # volume
-            ))
-
-        conn.commit()
-        conn.close()
-        logging.info(f"Saved {len(validated_klines)} validated historical data points for {symbol}")
-
-    except sqlite3.Error as e:
-        logging.error(f"Failed to save historical data: {e}")
 
 def _validate_kline_data(kline):
     """Validate individual kline data point"""
@@ -260,10 +233,6 @@ def _calculate_rsi(prices, periods=14):
 
     return rsi
 
-def get_db_connection():
-    """Thread-safe database connection"""
-    return sqlite3.connect('table_transactions.db')
-
 def execute_db_operation(operation, params=None):
     """Execute database operation with proper locking"""
     with db_lock:
@@ -323,71 +292,6 @@ def setup_database():
 
     conn.commit()
     conn.close()
-
-def get_balances():
-    """
-    Get account balances from Binance
-    Returns: dict with 'USDT' and other asset balances
-    """
-    try:
-        account = client.get_account()
-        balances = {}
-
-        for balance in account['balances']:
-            asset = balance['asset']
-            free = float(balance['free'])
-            locked = float(balance['locked'])
-
-            if free > 0 or locked > 0:  # Only store assets with balance
-                balances[asset] = {
-                    'free': free,
-                    'locked': locked,
-                    'total': free + locked
-                }
-        return balances
-    except BinanceAPIException as e:
-        logging.error(f"Failed to get balances: {e}")
-        return {}
-
-def send_asset_status():
-    """Send current asset status to Telegram."""
-    try:
-        balances = get_balances()
-        usdt_free = balances.get('USDT', {}).get('free', 0.0)
-
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        status_message = f"🔄 Status Aset ({current_time})\n\n"
-        status_message += f"💵 USDT: {usdt_free:.2f}\n\n"
-
-        total_value_usdt = usdt_free
-
-        for symbol in SYMBOLS:
-            asset = symbol.replace('USDT', '')
-            balance = balances.get(asset, {}).get('free', 0.0)
-            last_price = get_last_price(symbol)
-
-            if last_price:
-                value_usdt = balance * last_price
-                total_value_usdt += value_usdt
-
-                last_buy_price = get_last_buy_price(symbol)
-                profit_loss = ""
-                if last_buy_price and balance > 0:
-                    pl_percent = ((last_price - last_buy_price) / last_buy_price) * 100
-                    profit_loss = f"(P/L: {pl_percent:.2f}%)"
-
-                status_message += f"🪙 {asset}:\n"
-                status_message += f"   Jumlah: {balance:.8f}\n"
-                status_message += f"   Harga: {last_price:.2f} USDT\n"
-                status_message += f"   Nilai: {value_usdt:.2f} USDT {profit_loss}\n\n"
-
-        status_message += f"💰 Total Nilai Portfolio: {total_value_usdt:.2f} USDT"
-
-        send_telegram_message(status_message)
-        logging.info("Status aset berhasil dikirim ke Telegram")
-
-    except Exception as e:
-        logging.error(f"Gagal mengirim status aset: {e}")
 
 def process_symbol_trade(symbol, usdt_per_symbol):
     """Process trading logic for a single symbol"""
@@ -481,31 +385,6 @@ def save_transaction(symbol, type, quantity, price):
         logging.info(f"Transaksi {type} {quantity} {symbol} pada harga {price} disimpan ke database")
     except sqlite3.Error as e:
         logging.error(f"Gagal menyimpan transaksi ke database: {e}")
-
-def get_last_buy_price(symbol):
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT price FROM transactions
-            WHERE symbol = ? AND type = 'buy'
-            ORDER BY timestamp DESC
-            LIMIT 1
-        ''', (symbol,))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else None
-    except sqlite3.Error as e:
-        logging.error(f"Gagal mendapatkan harga pembelian terakhir: {e}")
-        return None
-
-def get_last_price(symbol):
-    try:
-        ticker = client.get_symbol_ticker(symbol=symbol)
-        return float(ticker['price'])
-    except BinanceAPIException as e:
-        logging.error(f"Gagal mendapatkan harga terakhir untuk {symbol}: {e}")
-        return None
 
 def cleanup_old_data():
     """Membersihkan data historis yang lebih dari 24 jam"""
@@ -635,12 +514,6 @@ def sell_asset(symbol, quantity):
         logging.error(f"Gagal menjual {symbol}: {e}")
         send_telegram_message(f"Gagal menjual {symbol}: {e}")
         return None
-
-def status_monitor():
-    """Thread terpisah untuk memantau dan mengirim status setiap jam."""
-    while True:
-        send_asset_status()
-        time.sleep(STATUS_INTERVAL)
 
 def check_app_status():
     """Memeriksa status aplikasi dan mengirim notifikasi jika ada masalah."""
