@@ -11,6 +11,9 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from src.send_telegram_message import send_telegram_message
 
+# Database connection lock
+db_lock = threading.Lock()
+
 # Membuat folder logs jika belum ada
 log_directory = 'logs/bot'
 if not os.path.exists(log_directory):
@@ -109,6 +112,34 @@ def _validate_kline_data(kline):
         pass
 
     return False
+
+def _perform_extended_analysis(symbol):
+    """Perform extended analysis on historical data"""
+    try:
+        with db_lock:
+            conn = get_db_connection()
+            df = pd.read_sql_query(f'''
+                SELECT timestamp, close_price, volume
+                FROM historical_data
+                WHERE symbol = '{symbol}'
+                ORDER BY timestamp DESC
+                LIMIT 500
+            ''', conn)
+            conn.close()
+
+        if len(df) < 50:
+            return
+
+        # Calculate additional technical indicators
+        df['EMA_20'] = df['close_price'].ewm(span=20).mean()
+        df['STD_20'] = df['close_price'].rolling(window=20).std()
+
+        # Save analysis results if needed
+        logging.info(f"Extended analysis completed for {symbol}")
+
+    except Exception as e:
+        logging.error(f"Extended analysis failed for {symbol}: {e}")
+
 
 def update_historical_data(symbol, client, extended_analysis=True):
     """Advanced historical data update with multi-timeframe support"""
@@ -229,8 +260,28 @@ def _calculate_rsi(prices, periods=14):
     return rsi
 
 def get_db_connection():
-    conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
-    return conn
+    """Thread-safe database connection"""
+    return sqlite3.connect('table_transactions.db')
+
+def execute_db_operation(operation, params=None):
+    """Execute database operation with proper locking"""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(operation, params)
+            else:
+                cursor.execute(operation)
+            conn.commit()
+            result = cursor.fetchall() if cursor.description else None
+            return result
+        except sqlite3.Error as e:
+            logging.error(f"Database error: {e}")
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 def setup_database():
     conn = get_db_connection()
@@ -337,50 +388,45 @@ def send_asset_status():
     except Exception as e:
         logging.error(f"Gagal mengirim status aset: {e}")
 
+def process_symbol_trade(symbol, usdt_per_symbol):
+    """Process trading logic for a single symbol"""
+    last_price = get_last_price(symbol)
+    if last_price is None:
+        return
+
+    balances = get_balances()
+    asset = symbol.replace('USDT', '')
+    asset_balance = balances.get(asset, {}).get('free', 0.0)
+
+    if asset_balance == 0 and usdt_per_symbol > 0:
+        handle_buy_scenario(symbol, last_price, usdt_per_symbol)
+    elif asset_balance > 0:
+        handle_sell_scenario(symbol, last_price, asset_balance)
+
 def trade():
-    while True:
+    """Main trading function with improved error handling"""
+    while app_status['running'] and app_status['trade_thread']:
         try:
             balances = get_balances()
-            usdt_balance = balances.get('USDT', {}).get('free', 0.0)
+            if not balances:
+                logging.error("Failed to get balances, skipping trade cycle")
+                time.sleep(CACHE_LIFETIME)
+                continue
 
-            if usdt_balance > 0:
-                usdt_per_symbol = usdt_balance / len(SYMBOLS)
-            else:
-                usdt_per_symbol = 0
+            usdt_balance = balances.get('USDT', {}).get('free', 0.0)
+            usdt_per_symbol = usdt_balance / len(SYMBOLS) if usdt_balance > 0 else 0
 
             for symbol in SYMBOLS:
-                last_price = get_last_price(symbol)
-                if last_price is None:
+                try:
+                    process_symbol_trade(symbol, usdt_per_symbol)
+                except Exception as e:
+                    logging.error(f"Error processing trade for {symbol}: {e}")
                     continue
 
-                asset = symbol.replace('USDT', '')
-                asset_balance = balances.get(asset, {}).get('free', 0.0)
-
-                if asset_balance == 0 and usdt_per_symbol > 0:
-                    if should_buy(symbol, last_price):
-                        # Calculate quantity based on available USDT
-                        quantity = (usdt_per_symbol * BUY_MULTIPLIER) / last_price
-                        step_size = get_symbol_step_size(symbol)
-                        if step_size:
-                            quantity = round_quantity(quantity, step_size)
-
-                        # Check minimum notional
-                        min_notional = get_min_notional(symbol)
-                        if min_notional and (quantity * last_price) >= min_notional:
-                            buy_asset(symbol, quantity)
-                        else:
-                            logging.info(f"Skipping buy {symbol}: Order size too small")
-                    else:
-                        logging.info(f"Kondisi membeli belum tepat untuk {symbol}")
-
-                elif asset_balance > 0:
-                    last_buy_price = get_last_buy_price(symbol)
-                    if last_buy_price and last_price >= last_buy_price * SELL_MULTIPLIER:
-                        sell_asset(symbol, asset_balance)
-
         except Exception as e:
-            logging.error(f"Error dalam fungsi trade: {e}")
+            logging.error(f"Critical error in trade function: {e}")
             app_status['trade_thread'] = False
+            break
 
         time.sleep(CACHE_LIFETIME)
 
@@ -477,9 +523,13 @@ def cleanup_old_data():
 
 def cleanup_monitor():
     """Thread untuk membersihkan data lama secara periodik"""
-    while True:
-        cleanup_old_data()
-        time.sleep(3600)  # Bersihkan setiap jam
+    while app_status['running'] and app_status['cleanup_thread']:
+        try:
+            cleanup_old_data()
+        except Exception as e:
+            logging.error(f"Error in cleanup monitor: {e}")
+            app_status['cleanup_thread'] = False
+        time.sleep(3600)
 
 def get_min_notional(symbol):
     """Mendapatkan minimum notional value yang diizinkan untuk trading"""
@@ -606,31 +656,42 @@ def cleanup_monitor():
         time.sleep(3600)  # Bersihkan setiap jam
 
 def main():
+    """Enhanced main function with proper thread management"""
     setup_database()
-    for symbol in SYMBOLS:
-        update_historical_data(symbol)
 
-    # Memulai thread untuk monitoring status
-    status_thread = threading.Thread(target=status_monitor, daemon=True)
-    status_thread.start()
+    try:
+        # Initialize historical data
+        for symbol in SYMBOLS:
+            update_historical_data(symbol)
 
-    # Memulai thread untuk trading
-    trade_thread = threading.Thread(target=trade, daemon=True)
-    trade_thread.start()
+        threads = [
+            threading.Thread(target=status_monitor, daemon=True),
+            threading.Thread(target=trade, daemon=True),
+            threading.Thread(target=cleanup_monitor, daemon=True),
+            threading.Thread(target=check_app_status, daemon=True)
+        ]
 
-    # Memulai thread untuk cleanup
-    cleanup_thread = threading.Thread(target=cleanup_monitor, daemon=True)
-    cleanup_thread.start()
+        # Start all threads
+        for thread in threads:
+            thread.start()
 
-    # Memulai thread untuk pengecekan status aplikasi
-    status_check_thread = threading.Thread(target=check_app_status, daemon=True)
-    status_check_thread.start()
+        # Wait for threads while allowing keyboard interrupt
+        try:
+            while any(thread.is_alive() for thread in threads):
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logging.info("Shutting down gracefully...")
+            app_status['running'] = False
 
-    # Menunggu kedua thread selesai
-    status_thread.join()
-    trade_thread.join()
-    cleanup_thread.join()
-    status_check_thread.join()
+            # Wait for threads to finish
+            for thread in threads:
+                thread.join(timeout=5.0)
+
+    except Exception as e:
+        logging.critical(f"Critical error in main: {e}")
+        app_status['running'] = False
+    finally:
+        logging.info("Application shutdown complete")
 
 if __name__ == "__main__":
     main()
