@@ -92,6 +92,118 @@ def setup_database():
     conn.commit()
     conn.close()
 
+def get_balances():
+    """
+    Get account balances from Binance
+    Returns: dict with 'USDT' and other asset balances
+    """
+    try:
+        account = client.get_account()
+        balances = {}
+
+        for balance in account['balances']:
+            asset = balance['asset']
+            free = float(balance['free'])
+            locked = float(balance['locked'])
+
+            if free > 0 or locked > 0:  # Only store assets with balance
+                balances[asset] = {
+                    'free': free,
+                    'locked': locked,
+                    'total': free + locked
+                }
+        return balances
+    except BinanceAPIException as e:
+        logging.error(f"Failed to get balances: {e}")
+        return {}
+
+def send_asset_status():
+    """Send current asset status to Telegram."""
+    try:
+        balances = get_balances()
+        usdt_free = balances.get('USDT', {}).get('free', 0.0)
+
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status_message = f"🔄 Status Aset ({current_time})\n\n"
+        status_message += f"💵 USDT: {usdt_free:.2f}\n\n"
+
+        total_value_usdt = usdt_free
+
+        for symbol in SYMBOLS:
+            asset = symbol.replace('USDT', '')
+            balance = balances.get(asset, {}).get('free', 0.0)
+            last_price = get_last_price(symbol)
+
+            if last_price:
+                value_usdt = balance * last_price
+                total_value_usdt += value_usdt
+
+                last_buy_price = get_last_buy_price(symbol)
+                profit_loss = ""
+                if last_buy_price and balance > 0:
+                    pl_percent = ((last_price - last_buy_price) / last_buy_price) * 100
+                    profit_loss = f"(P/L: {pl_percent:.2f}%)"
+
+                status_message += f"🪙 {asset}:\n"
+                status_message += f"   Jumlah: {balance:.8f}\n"
+                status_message += f"   Harga: {last_price:.2f} USDT\n"
+                status_message += f"   Nilai: {value_usdt:.2f} USDT {profit_loss}\n\n"
+
+        status_message += f"💰 Total Nilai Portfolio: {total_value_usdt:.2f} USDT"
+
+        send_telegram_message(status_message)
+        logging.info("Status aset berhasil dikirim ke Telegram")
+
+    except Exception as e:
+        logging.error(f"Gagal mengirim status aset: {e}")
+
+def trade():
+    while True:
+        try:
+            balances = get_balances()
+            usdt_balance = balances.get('USDT', {}).get('free', 0.0)
+
+            if usdt_balance > 0:
+                usdt_per_symbol = usdt_balance / len(SYMBOLS)
+            else:
+                usdt_per_symbol = 0
+
+            for symbol in SYMBOLS:
+                last_price = get_last_price(symbol)
+                if last_price is None:
+                    continue
+
+                asset = symbol.replace('USDT', '')
+                asset_balance = balances.get(asset, {}).get('free', 0.0)
+
+                if asset_balance == 0 and usdt_per_symbol > 0:
+                    if should_buy(symbol, last_price):
+                        # Calculate quantity based on available USDT
+                        quantity = (usdt_per_symbol * BUY_MULTIPLIER) / last_price
+                        step_size = get_symbol_step_size(symbol)
+                        if step_size:
+                            quantity = round_quantity(quantity, step_size)
+
+                        # Check minimum notional
+                        min_notional = get_min_notional(symbol)
+                        if min_notional and (quantity * last_price) >= min_notional:
+                            buy_asset(symbol, quantity)
+                        else:
+                            logging.info(f"Skipping buy {symbol}: Order size too small")
+                    else:
+                        logging.info(f"Kondisi membeli belum tepat untuk {symbol}")
+
+                elif asset_balance > 0:
+                    last_buy_price = get_last_buy_price(symbol)
+                    if last_buy_price and last_price >= last_buy_price * SELL_MULTIPLIER:
+                        sell_asset(symbol, asset_balance)
+
+        except Exception as e:
+            logging.error(f"Error dalam fungsi trade: {e}")
+            app_status['trade_thread'] = False
+
+        time.sleep(CACHE_LIFETIME)
+
 def save_historical_data(symbol, klines):
     """Menyimpan data historical ke database"""
     try:
@@ -305,70 +417,6 @@ def cleanup_monitor():
         cleanup_old_data()
         time.sleep(3600)  # Bersihkan setiap jam
 
-def get_balances():
-    """
-    Get account balances from Binance
-    Returns: (float, dict) - (usdt_free, other_balances)
-    """
-    try:
-        account = client.get_account()
-        usdt_free = 0
-        balances = {}
-
-        for balance in account['balances']:
-            asset = balance['asset']
-            free = float(balance['free'])
-            locked = float(balance['locked'])
-
-            if free > 0 or locked > 0:  # Only store assets with balance
-                if asset == 'USDT':
-                    usdt_free = free
-                else:
-                    balances[asset] = free  # We only need free balance for other assets
-
-        return usdt_free, balances
-    except BinanceAPIException as e:
-        logging.error(f"Failed to get balances: {e}")
-        return 0.0, {}
-
-def send_asset_status():
-    """Send current asset status to Telegram."""
-    try:
-        usdt_free, asset_balances = get_balances()
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        status_message = f"🔄 Status Aset ({current_time})\n\n"
-        status_message += f"💵 USDT: {usdt_free:.2f}\n\n"
-
-        total_value_usdt = usdt_free
-
-        for symbol in SYMBOLS:
-            asset = symbol.replace('USDT', '')
-            balance = asset_balances.get(asset, 0.0)
-            last_price = get_last_price(symbol)
-
-            if last_price:
-                value_usdt = balance * last_price
-                total_value_usdt += value_usdt
-
-                last_buy_price = get_last_buy_price(symbol)
-                profit_loss = ""
-                if last_buy_price and balance > 0:
-                    pl_percent = ((last_price - last_buy_price) / last_buy_price) * 100
-                    profit_loss = f"(P/L: {pl_percent:.2f}%)"
-
-                status_message += f"🪙 {asset}:\n"
-                status_message += f"   Jumlah: {balance:.8f}\n"
-                status_message += f"   Harga: {last_price:.2f} USDT\n"
-                status_message += f"   Nilai: {value_usdt:.2f} USDT {profit_loss}\n\n"
-
-        status_message += f"💰 Total Nilai Portfolio: {total_value_usdt:.2f} USDT"
-
-        send_telegram_message(status_message)
-        logging.info("Status aset berhasil dikirim ke Telegram")
-
-    except Exception as e:
-        logging.error(f"Gagal mengirim status aset: {e}")
-
 def get_min_notional(symbol):
     """Mendapatkan minimum notional value yang diizinkan untuk trading"""
     try:
@@ -472,53 +520,6 @@ def sell_asset(symbol, quantity):
         logging.error(f"Gagal menjual {symbol}: {e}")
         send_telegram_message(f"Gagal menjual {symbol}: {e}")
         return None
-
-def trade():
-    while True:
-        try:
-            balances = get_balances()
-            usdt_balance = balances.get('USDT', {}).get('free', 0)
-
-            if usdt_balance > 0:
-                usdt_per_symbol = usdt_balance / len(SYMBOLS)
-            else:
-                usdt_per_symbol = 0
-
-            for symbol in SYMBOLS:
-                last_price = get_last_price(symbol)
-                if last_price is None:
-                    continue
-
-                asset = symbol.replace('USDT', '')
-                asset_balance = balances.get(asset, {}).get('free', 0)
-
-                if asset_balance == 0 and usdt_per_symbol > 0:
-                    if should_buy(symbol, last_price):
-                        # Hitung quantity berdasarkan available USDT
-                        quantity = (usdt_per_symbol * BUY_MULTIPLIER) / last_price
-                        step_size = get_symbol_step_size(symbol)
-                        if step_size:
-                            quantity = round_quantity(quantity, step_size)
-
-                        # Periksa minimum notional
-                        min_notional = get_min_notional(symbol)
-                        if min_notional and (quantity * last_price) >= min_notional:
-                            buy_asset(symbol, quantity)
-                        else:
-                            logging.info(f"Skipping buy {symbol}: Order size too small")
-                    else:
-                        logging.info(f"Kondisi membeli belum tepat untuk {symbol}")
-
-                elif asset_balance > 0:
-                    last_buy_price = get_last_buy_price(symbol)
-                    if last_buy_price and last_price >= last_buy_price * SELL_MULTIPLIER:
-                        sell_asset(symbol, asset_balance)
-
-        except Exception as e:
-            logging.error(f"Error dalam fungsi trade: {e}")
-            app_status['trade_thread'] = False
-
-        time.sleep(CACHE_LIFETIME)
 
 def status_monitor():
     """Thread terpisah untuk memantau dan mengirim status setiap jam."""
