@@ -21,7 +21,6 @@ charset-normalizer==3.4.1
 click==8.1.8
 constantly==23.10.4
 coverage==7.6.10
--e git+ssh://git@github.com/addhe/simple-spot-trading-bot.git@307a2aee6c1cfd624156884321662a78ed005633#egg=crypto_trading_bot
 cryptography==44.0.0
 dateparser==1.2.0
 decorator==5.1.1
