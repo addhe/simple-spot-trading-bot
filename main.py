@@ -20,6 +20,7 @@ from src.send_telegram_message import send_telegram_message
 from src.status_monitor import status_monitor
 from src.setup_database import setup_database
 from src.save_transaction import save_transaction
+from src.get_symbol_step_size import get_symbol_step_size
 
 from src._validate_kline_data import _validate_kline_data
 from src._calculate_rsi import _calculate_rsi
@@ -345,18 +346,6 @@ def get_cached_historical_data(symbol, minutes=60):
     except sqlite3.Error as e:
         logging.error(f"Gagal mengambil data historis dari cache: {e}")
         return []
-
-
-
-def get_symbol_step_size(symbol):
-    try:
-        info = client.get_symbol_info(symbol)
-        for f in info['filters']:
-            if f['filterType'] == 'LOT_SIZE':
-                return float(f['stepSize'])
-    except BinanceAPIException as e:
-        logging.error(f"Gagal mendapatkan stepSize untuk {symbol}: {e}")
-    return None
 
 def round_quantity(quantity, step_size):
     return math.floor(quantity / step_size) * step_size
