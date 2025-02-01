@@ -7,7 +7,6 @@ import math
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from src.send_telegram_message import send_telegram_message
 from src.get_balances import get_balances
