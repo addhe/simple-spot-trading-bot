@@ -228,6 +228,23 @@ def should_buy(symbol, current_price, advanced_indicators=True):
         Total Conditions Met: {conditions_met}/4
         """)
 
+        send_telegram_message(f"""
+        {symbol} Detailed Buy Analysis:
+        Current Price: {current_price}
+        50-Day MA: {latest['MA_50']}
+        200-Day MA: {latest['MA_200']}
+        RSI: {latest['RSI']}
+        Volume Ratio: {current_volume/avg_volume:.2f}x (Need: {volume_requirement}x)
+        Volume Condition Met: {volume_condition}
+
+        Individual Conditions:
+        - Price Below MA50: {buy_conditions['price_below_ma50']}
+        - Bullish Trend: {buy_conditions['bullish_trend']}
+        - Oversold: {buy_conditions['oversold']}
+        - Price Discount: {buy_conditions['discount']}
+        Total Conditions Met: {conditions_met}/4
+        """)
+
         # Flexible decision making based on RSI levels
         if latest['RSI'] < 15:  # Extremely oversold
             # Hanya perlu 2 kondisi + volume yang lebih rendah
