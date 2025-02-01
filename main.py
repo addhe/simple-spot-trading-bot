@@ -179,7 +179,7 @@ def update_historical_data(symbol, client, extended_analysis=True):
         return False
 
 def should_buy(symbol, current_price, advanced_indicators=True):
-    """Advanced buying decision with multiple technical indicators"""
+    """Advanced buying decision with flexible conditions based on RSI levels"""
     try:
         # Retrieve historical data
         conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
@@ -207,28 +207,62 @@ def should_buy(symbol, current_price, advanced_indicators=True):
 
         latest = df.iloc[-1]
 
-        # Advanced Buy Conditions
-        buy_conditions = [
-            current_price < latest['MA_50'],  # Price below short-term moving average
-            latest['MA_50'] > latest['MA_200'],  # Short-term trend is bullish
-            latest['RSI'] < 30,  # Oversold condition
-            current_price < latest['MA_200'] * 0.95  # Significant discount
-        ]
+        # Volume Analysis
+        avg_volume = df['volume'].tail(10).mean()
+        current_volume = df['volume'].iloc[-1]
 
-        # Volume confirmation
-        volume_spike = df['volume'].tail(10).mean() * 1.5 < df['volume'].iloc[-1]
+        # Relaxed volume requirement:
+        # 1. Normal condition: volume harus 1.5x dari rata-rata
+        # 2. RSI < 20: volume hanya perlu 1.2x dari rata-rata
+        # 3. RSI < 15: volume hanya perlu 1.1x dari rata-rata
+        if latest['RSI'] < 15:
+            volume_requirement = 1.1
+        elif latest['RSI'] < 20:
+            volume_requirement = 1.2
+        else:
+            volume_requirement = 1.5
 
+        volume_condition = current_volume > (avg_volume * volume_requirement)
+
+        # Basic Buy Conditions
+        buy_conditions = {
+            'price_below_ma50': current_price < latest['MA_50'],
+            'bullish_trend': latest['MA_50'] > latest['MA_200'],
+            'oversold': latest['RSI'] < 30,
+            'discount': current_price < latest['MA_200'] * 0.95
+        }
+
+        # Count how many conditions are met
+        conditions_met = sum(buy_conditions.values())
+
+        # Logging untuk debugging
         logging.info(f"""
-        {symbol} Buy Analysis:
+        {symbol} Detailed Buy Analysis:
         Current Price: {current_price}
         50-Day MA: {latest['MA_50']}
         200-Day MA: {latest['MA_200']}
         RSI: {latest['RSI']}
-        Volume Spike: {volume_spike}
-        Buy Signals Met: {sum(buy_conditions)}/4
+        Volume Ratio: {current_volume/avg_volume:.2f}x (Need: {volume_requirement}x)
+        Volume Condition Met: {volume_condition}
+
+        Individual Conditions:
+        - Price Below MA50: {buy_conditions['price_below_ma50']}
+        - Bullish Trend: {buy_conditions['bullish_trend']}
+        - Oversold: {buy_conditions['oversold']}
+        - Price Discount: {buy_conditions['discount']}
+        Total Conditions Met: {conditions_met}/4
         """)
 
-        return sum(buy_conditions) >= 3 and volume_spike
+        # Flexible decision making based on RSI levels
+        if latest['RSI'] < 15:  # Extremely oversold
+            # Hanya perlu 2 kondisi + volume yang lebih rendah
+            return conditions_met >= 2 and volume_condition
+        elif latest['RSI'] < 20:  # Very oversold
+            # Perlu 3 kondisi + volume yang lebih rendah
+            return conditions_met >= 3 and volume_condition
+        else:  # Normal conditions
+            # Perlu 3 kondisi + volume yang lebih tinggi
+            return conditions_met >= 3 and volume_condition
 
     except Exception as e:
         logging.error(f"Buy condition analysis failed for {symbol}: {e}")
