@@ -20,6 +20,8 @@ from src.send_telegram_message import send_telegram_message
 from src.status_monitor import status_monitor
 
 from src._validate_kline_data import _validate_kline_data
+from src._calculate_rsi import _calculate_rsi
+from src._perform_extended_analysis import _perform_extended_analysis
 
 # Database connection lock
 db_lock = threading.Lock()
@@ -63,33 +65,6 @@ app_status = {
     'status_thread': True,
     'cleanup_thread': True
 }
-
-def _perform_extended_analysis(symbol):
-    """Perform extended analysis on historical data"""
-    try:
-        with db_lock:
-            conn = get_db_connection()
-            df = pd.read_sql_query(f'''
-                SELECT timestamp, close_price, volume
-                FROM historical_data
-                WHERE symbol = '{symbol}'
-                ORDER BY timestamp DESC
-                LIMIT 500
-            ''', conn)
-            conn.close()
-
-        if len(df) < 50:
-            return
-
-        # Calculate additional technical indicators
-        df['EMA_20'] = df['close_price'].ewm(span=20).mean()
-        df['STD_20'] = df['close_price'].rolling(window=20).std()
-
-        # Save analysis results if needed
-        logging.info(f"Extended analysis completed for {symbol}")
-
-    except Exception as e:
-        logging.error(f"Extended analysis failed for {symbol}: {e}")
 
 def update_historical_data(symbol, client, extended_analysis=True):
     """Advanced historical data update with multi-timeframe support and improved error handling"""
@@ -267,21 +242,6 @@ def should_buy(symbol, current_price, advanced_indicators=True):
     except Exception as e:
         logging.error(f"Buy condition analysis failed for {symbol}: {e}")
         return False
-
-def _calculate_rsi(prices, periods=14):
-    """Calculate Relative Strength Index"""
-    delta = prices.diff()
-
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(window=periods).mean()
-    avg_loss = loss.rolling(window=periods).mean()
-
-    relative_strength = avg_gain / avg_loss
-    rsi = 100.0 - (100.0 / (1.0 + relative_strength))
-
-    return rsi
 
 def execute_db_operation(operation, params=None):
     """Execute database operation with proper locking"""
