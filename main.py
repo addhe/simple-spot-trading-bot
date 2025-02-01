@@ -91,9 +91,8 @@ def _perform_extended_analysis(symbol):
     except Exception as e:
         logging.error(f"Extended analysis failed for {symbol}: {e}")
 
-
 def update_historical_data(symbol, client, extended_analysis=True):
-    """Advanced historical data update with multi-timeframe support"""
+    """Advanced historical data update with multi-timeframe support and improved error handling"""
     try:
         conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
         cursor = conn.cursor()
@@ -121,12 +120,50 @@ def update_historical_data(symbol, client, extended_analysis=True):
         ]
 
         for interval in intervals:
-            klines = client.get_historical_klines(
-                symbol,
-                interval,
-                start_str=start_time
-            )
-            save_historical_data(symbol, klines)
+            try:
+                klines = client.get_historical_klines(
+                    symbol,
+                    interval,
+                    start_str=start_time
+                )
+
+                if not klines:
+                    logging.warning(f"No kline data received for {symbol} on interval {interval}")
+                    continue
+
+                # Validate kline data before saving
+                for kline in klines:
+                    if len(kline) < 6:
+                        logging.error(f"Invalid kline data format for {symbol}: {kline}")
+                        continue
+
+                    # Format timestamp
+                    timestamp = datetime.fromtimestamp(kline[0] / 1000)
+
+                    # Insert with error handling
+                    try:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO historical_data
+                            (symbol, timestamp, open_price, high_price, low_price, close_price, volume)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            symbol,
+                            timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+                            float(kline[1]),
+                            float(kline[2]),
+                            float(kline[3]),
+                            float(kline[4]),
+                            float(kline[5])
+                        ))
+                    except (ValueError, sqlite3.Error) as e:
+                        logging.error(f"Failed to insert kline data for {symbol}: {e}")
+                        continue
+
+                conn.commit()
+
+            except BinanceAPIException as e:
+                logging.error(f"Binance API error for {symbol} on interval {interval}: {e}")
+                continue
 
         conn.close()
 
@@ -136,7 +173,9 @@ def update_historical_data(symbol, client, extended_analysis=True):
         return True
 
     except Exception as e:
-        logging.error(f"Failed to update historical data for {symbol}: {e}")
+        logging.error(f"Failed to update historical data for {symbol}: {str(e)}")
+        if conn:
+            conn.close()
         return False
 
 def should_buy(symbol, current_price, advanced_indicators=True):
