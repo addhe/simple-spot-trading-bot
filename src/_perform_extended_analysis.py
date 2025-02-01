@@ -2,6 +2,9 @@ import pandas as pd
 import logging
 from src.get_db_connection import get_db_connection
 
+# Database connection lock
+db_lock = threading.Lock()
+
 def _perform_extended_analysis(symbol):
     """Perform extended analysis on historical data"""
     try:
