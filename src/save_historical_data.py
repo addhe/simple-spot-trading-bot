@@ -3,6 +3,7 @@ import time
 import logging
 import sqlite3
 from datetime import datetime, timedelta
+from src._validate_kline_data import _validate_kline_data
 
 def save_historical_data(symbol, klines):
     """Enhanced historical data saving with data validation"""

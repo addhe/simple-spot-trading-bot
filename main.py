@@ -19,6 +19,8 @@ from src.send_asset_status import send_asset_status
 from src.send_telegram_message import send_telegram_message
 from src.status_monitor import status_monitor
 
+from src._validate_kline_data import _validate_kline_data
+
 # Database connection lock
 db_lock = threading.Lock()
 
@@ -61,31 +63,6 @@ app_status = {
     'status_thread': True,
     'cleanup_thread': True
 }
-
-def _validate_kline_data(kline):
-    """Validate individual kline data point"""
-    try:
-        # Check data types and ranges
-        float_values = [
-            float(kline[1]),  # open
-            float(kline[2]),  # high
-            float(kline[3]),  # low
-            float(kline[4]),  # close
-            float(kline[5])   # volume
-        ]
-
-        # Validate price and volume
-        if (
-            float_values[1] >= float_values[3] and  # high >= close
-            float_values[2] <= float_values[3] and  # low <= close
-            float_values[5] >= 0  # volume non-negative
-        ):
-            return True
-
-    except (ValueError, TypeError):
-        pass
-
-    return False
 
 def _perform_extended_analysis(symbol):
     """Perform extended analysis on historical data"""
