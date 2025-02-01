@@ -18,6 +18,8 @@ from src.save_historical_data import save_historical_data
 from src.send_asset_status import send_asset_status
 from src.send_telegram_message import send_telegram_message
 from src.status_monitor import status_monitor
+from src.setup_database import setup_database
+from src.save_transaction import save_transaction
 
 from src._validate_kline_data import _validate_kline_data
 from src._calculate_rsi import _calculate_rsi
@@ -280,46 +282,6 @@ def execute_db_operation(operation, params=None):
         finally:
             conn.close()
 
-def setup_database():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Tabel transaksi yang sudah ada
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT,
-        symbol TEXT,
-        type TEXT,
-        quantity REAL,
-        price REAL
-    )
-    ''')
-
-    # Tabel baru untuk historical data
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS historical_data (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        symbol TEXT,
-        timestamp TEXT,
-        open_price REAL,
-        high_price REAL,
-        low_price REAL,
-        close_price REAL,
-        volume REAL,
-        UNIQUE(symbol, timestamp)
-    )
-    ''')
-
-    # Index untuk mempercepat query
-    cursor.execute('''
-    CREATE INDEX IF NOT EXISTS idx_historical_symbol_timestamp
-    ON historical_data(symbol, timestamp)
-    ''')
-
-    conn.commit()
-    conn.close()
-
 def process_symbol_trade(symbol, usdt_per_symbol):
     """Process trading logic for a single symbol"""
     last_price = get_last_price(symbol)
@@ -398,20 +360,6 @@ def get_symbol_step_size(symbol):
 
 def round_quantity(quantity, step_size):
     return math.floor(quantity / step_size) * step_size
-
-def save_transaction(symbol, type, quantity, price):
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO transactions (timestamp, symbol, type, quantity, price)
-            VALUES (strftime('%Y-%m-%d %H:%M:%S', 'now'), ?, ?, ?, ?)
-        ''', (symbol, type, quantity, price))
-        conn.commit()
-        conn.close()
-        logging.info(f"Transaksi {type} {quantity} {symbol} pada harga {price} disimpan ke database")
-    except sqlite3.Error as e:
-        logging.error(f"Gagal menyimpan transaksi ke database: {e}")
 
 def cleanup_old_data():
     """Membersihkan data historis yang lebih dari 24 jam"""
