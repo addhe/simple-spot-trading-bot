@@ -4,7 +4,7 @@
 BOT_NAME="crypto_bot"
 
 # Direktori tempat skrip main.py berada
-SCRIPT_DIR="/root/simple-spot-trading-bot"
+SCRIPT_DIR="/root/simple-spot-trading-bot-dev"
 
 # Baca PID dari file
 PID_FILE="$SCRIPT_DIR/$BOT_NAME.pid"
