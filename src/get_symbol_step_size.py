@@ -3,7 +3,7 @@ import os
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 
-from config import API_KEY, API_SECRET, BASE_URL
+from config.settings import API_KEY, API_SECRET, BASE_URL
 
 # Inisialisasi klien Binance
 client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)

@@ -26,7 +26,7 @@ from src._validate_kline_data import _validate_kline_data
 from src._calculate_rsi import _calculate_rsi
 from src._perform_extended_analysis import _perform_extended_analysis
 
-from config import API_KEY, API_SECRET, BASE_URL, TELEGRAM_TOKEN, TELEGRAM_GROUP_ID
+from config.settings import API_KEY, API_SECRET, BASE_URL, TELEGRAM_TOKEN, TELEGRAM_GROUP_ID
 
 # Database connection lock
 db_lock = threading.Lock()

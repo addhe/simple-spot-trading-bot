@@ -1,7 +1,7 @@
 import requests
 import os
 
-from config import TELEGRAM_TOKEN, TELEGRAM_GROUP_ID
+from config.settings import TELEGRAM_TOKEN, TELEGRAM_GROUP_ID
 
 # fungsi untuk mengirimkan pesan ke telegram
 def send_telegram_message(message):
