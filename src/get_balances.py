@@ -10,9 +10,7 @@ from datetime import datetime, timedelta
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 
-API_KEY = os.getenv('API_KEY_SPOT_TESTNET_BINANCE', '')
-API_SECRET = os.getenv('API_SECRET_SPOT_TESTNET_BINANCE', '')
-BASE_URL = 'https://testnet.binance.vision/api'
+from config import API_KEY, API_SECRET, BASE_URL
 
 # Inisialisasi klien Binance
 client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)

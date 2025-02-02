@@ -1,7 +1,7 @@
 import time
 from src.send_asset_status import send_asset_status
 
-STATUS_INTERVAL = 3600  # 1 jam dalam detik
+from config import STATUS_INTERVAL
 
 def status_monitor():
     """Thread terpisah untuk memantau dan mengirim status setiap jam."""

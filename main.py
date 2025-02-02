@@ -26,6 +26,8 @@ from src._validate_kline_data import _validate_kline_data
 from src._calculate_rsi import _calculate_rsi
 from src._perform_extended_analysis import _perform_extended_analysis
 
+from config import API_KEY, API_SECRET, BASE_URL, TELEGRAM_TOKEN, TELEGRAM_GROUP_ID
+
 # Database connection lock
 db_lock = threading.Lock()
 
@@ -37,13 +39,6 @@ if not os.path.exists(log_directory):
 # Konfigurasi logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
                     filename=os.path.join(log_directory, 'bot.log'), filemode='a')
-
-# Mengambil variabel lingkungan
-API_KEY = os.getenv('API_KEY_SPOT_TESTNET_BINANCE', '')
-API_SECRET = os.getenv('API_SECRET_SPOT_TESTNET_BINANCE', '')
-BASE_URL = 'https://testnet.binance.vision/api'
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
-TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID', '')
 
 if not API_KEY or not API_SECRET:
     logging.error("API Key dan Secret tidak ditemukan! Pastikan telah diatur di environment variables.")

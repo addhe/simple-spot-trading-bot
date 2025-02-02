@@ -13,7 +13,7 @@ from src.get_balances import get_balances
 from src.get_last_price import get_last_price
 from src.get_last_buy_price import get_last_buy_price
 
-SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+from config import SYMBOLS
 
 def send_asset_status():
     """Send current asset status to Telegram."""
