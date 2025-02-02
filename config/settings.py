@@ -10,7 +10,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
 TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID', '')
 
 # Trading Pairs Configuration
-SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+SYMBOLS = ['USDCUSDT', 'ETHUSDT', 'SOLUSDT']
 
 # Trading Parameters
 MAX_INVESTMENT_PER_TRADE = 0.1  # Maksimal 10% dari total portfolio per trade
