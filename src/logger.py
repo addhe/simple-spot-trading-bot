@@ -1,5 +1,5 @@
 import os
-import logger
+import logging
 
 def setup_logging(self):
     """Configure logging with rotation"""
