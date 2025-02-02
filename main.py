@@ -27,6 +27,7 @@ from src.get_symbol_step_size import get_symbol_step_size
 from src._validate_kline_data import _validate_kline_data
 from src._calculate_rsi import _calculate_rsi
 from src._perform_extended_analysis import _perform_extended_analysis
+from src.logger import setup_logging
 
 from config.settings import (
     API_KEY,
@@ -47,8 +48,7 @@ class TradingBot:
     def __init__(self):
         # Pastikan db_path sudah didefinisikan sebelum dipakai fungsi lain
         self.db_path = 'table_transactions.db'
-
-        self.setup_logging()
+        self.logger = setup_logging()
         self.initialize_state()
         self.initialize_client()
         self.setup_database()
@@ -62,24 +62,6 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error fetching historical data for {symbol}: {e}")
             return []
-
-    def setup_logging(self):
-        """Configure logging with rotation"""
-        log_directory = 'logs/bot'
-        if not os.path.exists(log_directory):
-            os.makedirs(log_directory)
-
-        self.logger = logging.getLogger('TradingBot')
-        self.logger.setLevel(logging.INFO)
-
-        handler = RotatingFileHandler(
-            os.path.join(log_directory, 'bot.log'),
-            maxBytes=10*1024*1024,  # 10MB
-            backupCount=5
-        )
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
 
     def initialize_state(self):
         """Initialize bot state and configuration"""
