@@ -13,7 +13,7 @@ from binance.exceptions import BinanceAPIException, BinanceOrderException
 from config.settings import API_KEY, API_SECRET, BASE_URL
 
 # Inisialisasi klien Binance
-client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
+client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=False)
 
 def get_balances():
     """
