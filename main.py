@@ -232,9 +232,9 @@ def should_buy(symbol, current_price, advanced_indicators=True, config=None):
         # Basic Buy Conditions
         buy_conditions = {
             'price_below_ma50': current_price < latest['MA_50'],
-            'bullish_trend': latest['MA_50'] > latest['MA_200'],
-            'oversold': latest['RSI'] < config['rsi_oversold'],
-            'discount': current_price < latest['MA_200'] * config['price_discount_threshold']
+            'bullish_trend': latest['MA_50'] > latest['MA_200']
+            #'oversold': latest['RSI'] < config['rsi_oversold'],
+            #'discount': current_price < latest['MA_200'] * config['price_discount_threshold']
         }
 
         # Count how many conditions are met
