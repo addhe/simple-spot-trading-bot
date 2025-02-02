@@ -45,14 +45,13 @@ from config.settings import (
 
 class TradingBot:
     def __init__(self):
+        # Pastikan db_path sudah didefinisikan sebelum dipakai fungsi lain
+        self.db_path = 'table_transactions.db'
+
         self.setup_logging()
         self.initialize_state()
         self.initialize_client()
         self.setup_database()
-        self.client = Client(api_key, api_secret)
-        self.db_path = db_path
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
 
     def get_historical_klines(self, symbol, interval, start_time):
         try:
@@ -149,6 +148,7 @@ class TradingBot:
 
         if not klines:
             self.logger.error(f"Skipping update for {symbol} due to empty klines response.")
+            conn.close()
             return False
 
         try:
@@ -370,6 +370,7 @@ class TradingBot:
 
 def main():
     """Main entry point"""
+    import sys
     try:
         bot = TradingBot()
         bot.run()
