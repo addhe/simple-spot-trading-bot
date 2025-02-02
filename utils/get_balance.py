@@ -2,8 +2,7 @@
 import os    
 import logging    
 from binance.client import Client    
-from config.settings import settings    
-from config.config import SYMBOLS  # Mengimpor SYMBOLS dari config/config.py    
+from config.settings import BASE_URL, API_KEY, API_SECRET, SYMBOLS
     
 # Konfigurasi logging    
 logging.basicConfig(level=logging.DEBUG, filename='get_balance.log',    
@@ -21,8 +20,8 @@ def get_balance(client, asset: str) -> float:
         return 0.0    
     
 def main():    
-    client = Client(settings['API_KEY'], settings['API_SECRET'])    
-    client.API_URL = 'https://testnet.binance.vision/api'    
+    client = Client(API_KEY, API_SECRET)    
+    client.API_URL = BASE_URL
     
     # Mendapatkan saldo untuk semua simbol yang ada di SYMBOLS    
     balances = {}    
@@ -36,7 +35,7 @@ def main():
     
     # Logging saldo untuk setiap aset    
     for asset, balance in balances.items():    
-        logging.info(f"Balance {asset}: {balance:.2f}")    
+        logging.info(f"Balance {asset}: {balance:.3f}")    
     
 if __name__ == "__main__":    
     main()    
