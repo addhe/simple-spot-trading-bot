@@ -168,9 +168,9 @@ def should_buy(symbol, current_price, advanced_indicators=True, config=None):
     default_config = {
         'min_data_points': 50,
         'volume_multipliers': {
-            'default': 1.5,
-            '<20_rsi': 1.2,
-            '<15_rsi': 1.1
+            'default': 1.2,
+            '<20_rsi': 1.1,
+            '<15_rsi': 1.0
         },
         'buy_condition_count': {
             'normal': 2,  # Lowered to 2 since we've removed some checks
