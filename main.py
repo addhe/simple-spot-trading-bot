@@ -49,6 +49,20 @@ class TradingBot:
         self.initialize_state()
         self.initialize_client()
         self.setup_database()
+        self.client = Client(api_key, api_secret)
+        self.db_path = db_path
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+
+    def get_historical_klines(self, symbol, interval, start_time):
+        try:
+            klines = self.client.get_historical_klines(symbol, interval, start_str=start_time)
+            if not klines:
+                self.logger.error(f"Empty klines data received for {symbol}. Full response: {klines}")
+            return klines
+        except Exception as e:
+            self.logger.error(f"Error fetching historical data for {symbol}: {e}")
+            return []
 
     def setup_logging(self):
         """Configure logging with rotation"""
@@ -99,43 +113,48 @@ class TradingBot:
         for symbol in SYMBOLS:
             self.update_historical_data(symbol)
 
-    def update_historical_data(self, symbol):
-        """Update historical data for a symbol"""
-        try:
-            if not self.client:
-                raise ValueError("Binance client not initialized")
+    def update_historical_data(self, symbol, interval='1h'):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
 
-            conn = sqlite3.connect('table_transactions.db')
-            cursor = conn.cursor()
-
-            # Get last recorded timestamp
-            cursor.execute('''
-                SELECT timestamp FROM historical_data
-                WHERE symbol = ? ORDER BY timestamp DESC LIMIT 1
-            ''', (symbol,))
-            last_record = cursor.fetchone()
-
-            # Calculate start time
-            if last_record:
-                last_timestamp = datetime.strptime(last_record[0], '%Y-%m-%d %H:%M:%S')
-                start_time = int(last_timestamp.timestamp() * 1000)
-            else:
-                start_time = int((datetime.now() - timedelta(days=7)).timestamp() * 1000)
-
-            # Fetch and validate klines
-            klines = self.client.get_historical_klines(
-                symbol,
-                INTERVAL,
-                start_str=start_time
+        # Buat tabel jika belum ada
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS historical_data (
+                symbol TEXT,
+                timestamp TEXT PRIMARY KEY,
+                open_price REAL,
+                high_price REAL,
+                low_price REAL,
+                close_price REAL,
+                volume REAL
             )
+        ''')
 
-            if not klines:
-                self.logger.warning(f"No kline data received for {symbol}")
-                return False
+        # Ambil timestamp terakhir dari database
+        cursor.execute("SELECT MAX(timestamp) FROM historical_data WHERE symbol = ?", (symbol,))
+        last_record = cursor.fetchone()
 
-            # Process and save klines
+        if last_record and last_record[0]:
+            last_timestamp = datetime.strptime(last_record[0], '%Y-%m-%d %H:%M:%S')
+            start_time = int(last_timestamp.timestamp() * 1000)
+        else:
+            start_time = int((datetime.now() - timedelta(days=7)).timestamp() * 1000)
+
+        current_time = int(datetime.now().timestamp() * 1000)
+        if start_time >= current_time:
+            start_time = current_time - (7 * 24 * 60 * 60 * 1000)  # Default ke 7 hari lalu jika ada masalah
+
+        # Ambil data dari Binance
+        klines = self.get_historical_klines(symbol, interval, start_time)
+
+        if not klines:
+            self.logger.error(f"Skipping update for {symbol} due to empty klines response.")
+            return False
+
+        try:
             for kline in klines:
-                if not _validate_kline_data(kline):
+                if len(kline) < 6:
+                    self.logger.warning(f"Incomplete kline data for {symbol}: {kline}")
                     continue
 
                 timestamp = datetime.fromtimestamp(kline[0] / 1000)
@@ -154,15 +173,13 @@ class TradingBot:
                 ))
 
             conn.commit()
-            conn.close()
-
-            # Perform extended analysis
-            _perform_extended_analysis(symbol)
+            self.logger.info(f"Successfully updated historical data for {symbol}.")
             return True
-
         except Exception as e:
-            self.logger.error(f"Failed to update historical data for {symbol}: {e}")
+            self.logger.error(f"Error processing klines for {symbol}: {e}")
             return False
+        finally:
+            conn.close()
 
     def should_buy(self, symbol, current_price):
         """Determine whether to buy based on technical analysis"""
