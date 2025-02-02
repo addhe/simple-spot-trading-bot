@@ -151,21 +151,56 @@ def update_historical_data(symbol, client, extended_analysis=True):
             conn.close()
         return False
 
-def should_buy(symbol, current_price, advanced_indicators=True):
-    """Advanced buying decision with flexible conditions based on RSI levels"""
+def should_buy(symbol, current_price, advanced_indicators=True, config=None):
+    """
+    Determine whether to buy an asset based on technical indicators and volume analysis.
+
+    Parameters:
+    - symbol (str): The trading symbol to analyze.
+    - current_price (float): The current market price of the asset.
+    - advanced_indicators (bool): If True, use advanced indicators.
+    - config (dict): Optional configuration dictionary to override default settings.
+
+    Returns:
+    - bool: True if buying conditions are met, False otherwise.
+    """
+    # Default configuration parameters
+    default_config = {
+        'min_data_points': 50,
+        'volume_multipliers': {
+            'default': 1.5,
+            '<20_rsi': 1.2,
+            '<15_rsi': 1.1
+        },
+        'rsi_oversold': 30,
+        'price_discount_threshold': 0.95,
+        'buy_condition_count': {
+            'normal': 3,
+            '<20_rsi': 3,
+            '<15_rsi': 2
+        }
+    }
+
+    # Merge default config with provided config
+    if config is not None:
+        config = {**default_config, **config}
+    else:
+        config = default_config
+
     try:
         # Retrieve historical data
         conn = sqlite3.connect('table_transactions.db', check_same_thread=False)
-        df = pd.read_sql_query(f'''
+        query = f'''
             SELECT timestamp, close_price, volume
             FROM historical_data
             WHERE symbol = '{symbol}'
             ORDER BY timestamp DESC
             LIMIT 500
-        ''', conn)
+        '''
+        df = pd.read_sql_query(query, conn)
         conn.close()
 
-        if len(df) < 50:
+        if len(df) < config['min_data_points']:
             logging.warning(f"Insufficient data for {symbol}")
             return False
 
@@ -173,7 +208,7 @@ def should_buy(symbol, current_price, advanced_indicators=True):
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df.set_index('timestamp', inplace=True)
 
-        # Technical Indicators
+        # Calculate Technical Indicators
         df['MA_50'] = df['close_price'].rolling(window=50).mean()
         df['MA_200'] = df['close_price'].rolling(window=200).mean()
         df['RSI'] = _calculate_rsi(df['close_price'])
@@ -184,16 +219,13 @@ def should_buy(symbol, current_price, advanced_indicators=True):
         avg_volume = df['volume'].tail(10).mean()
         current_volume = df['volume'].iloc[-1]
 
-        # Relaxed volume requirement:
-        # 1. Normal condition: volume harus 1.5x dari rata-rata
-        # 2. RSI < 20: volume hanya perlu 1.2x dari rata-rata
-        # 3. RSI < 15: volume hanya perlu 1.1x dari rata-rata
+        # Determine volume requirement based on RSI
         if latest['RSI'] < 15:
-            volume_requirement = 1.1
+            volume_requirement = config['volume_multipliers']['<15_rsi']
         elif latest['RSI'] < 20:
-            volume_requirement = 1.2
+            volume_requirement = config['volume_multipliers']['<20_rsi']
         else:
-            volume_requirement = 1.5
+            volume_requirement = config['volume_multipliers']['default']
 
         volume_condition = current_volume > (avg_volume * volume_requirement)
 
@@ -201,58 +233,45 @@ def should_buy(symbol, current_price, advanced_indicators=True):
         buy_conditions = {
             'price_below_ma50': current_price < latest['MA_50'],
             'bullish_trend': latest['MA_50'] > latest['MA_200'],
-            'oversold': latest['RSI'] < 30,
-            'discount': current_price < latest['MA_200'] * 0.95
+            'oversold': latest['RSI'] < config['rsi_oversold'],
+            'discount': current_price < latest['MA_200'] * config['price_discount_threshold']
         }
 
         # Count how many conditions are met
         conditions_met = sum(buy_conditions.values())
 
-        # Logging untuk debugging
-        logging.info(f"""
-        {symbol} Detailed Buy Analysis:
-        Current Price: {current_price}
-        50-Day MA: {latest['MA_50']}
-        200-Day MA: {latest['MA_200']}
-        RSI: {latest['RSI']}
-        Volume Ratio: {current_volume/avg_volume:.2f}x (Need: {volume_requirement}x)
-        Volume Condition Met: {volume_condition}
+        # Enhanced Logging for debugging
+        logging.info(f"{symbol} Detailed Buy Analysis:")
+        logging.info(f"Current Price: {current_price}")
+        logging.info(f"50-Day MA: {latest['MA_50']}")
+        logging.info(f"200-Day MA: {latest['MA_200']}")
+        logging.info(f"RSI: {latest['RSI']}")
+        logging.info(f"Volume Ratio: {current_volume/avg_volume:.2f}x (Need: {volume_requirement}x)")
+        logging.info(f"Volume Condition Met: {volume_condition}")
+        logging.info(f"Individual Conditions: {buy_conditions}")
+        logging.info(f"Total Conditions Met: {conditions_met}/{len(buy_conditions)}")
 
-        Individual Conditions:
-        - Price Below MA50: {buy_conditions['price_below_ma50']}
-        - Bullish Trend: {buy_conditions['bullish_trend']}
-        - Oversold: {buy_conditions['oversold']}
-        - Price Discount: {buy_conditions['discount']}
-        Total Conditions Met: {conditions_met}/4
-        """)
-
-        send_telegram_message(f"""
-        {symbol} Detailed Buy Analysis:
-        Current Price: {current_price}
-        50-Day MA: {latest['MA_50']}
-        200-Day MA: {latest['MA_200']}
-        RSI: {latest['RSI']}
-        Volume Ratio: {current_volume/avg_volume:.2f}x (Need: {volume_requirement}x)
-        Volume Condition Met: {volume_condition}
-
-        Individual Conditions:
-        - Price Below MA50: {buy_conditions['price_below_ma50']}
-        - Bullish Trend: {buy_conditions['bullish_trend']}
-        - Oversold: {buy_conditions['oversold']}
-        - Price Discount: {buy_conditions['discount']}
-        Total Conditions Met: {conditions_met}/4
-        """)
+        send_telegram_message(f"{symbol} Detailed Buy Analysis:\n"
+                              f"Current Price: {current_price}\n"
+                              f"50-Day MA: {latest['MA_50']}\n"
+                              f"200-Day MA: {latest['MA_200']}\n"
+                              f"RSI: {latest['RSI']}\n"
+                              f"Volume Ratio: {current_volume/avg_volume:.2f}x (Need: {volume_requirement}x)\n"
+                              f"Volume Condition Met: {volume_condition}\n"
+                              f"Individual Conditions:\n"
+                              f"- Price Below MA50: {buy_conditions['price_below_ma50']}\n"
+                              f"- Bullish Trend: {buy_conditions['bullish_trend']}\n"
+                              f"- Oversold: {buy_conditions['oversold']}\n"
+                              f"- Price Discount: {buy_conditions['discount']}\n"
+                              f"Total Conditions Met: {conditions_met}/{len(buy_conditions)}")
 
         # Flexible decision making based on RSI levels
         if latest['RSI'] < 15:  # Extremely oversold
-            # Hanya perlu 2 kondisi + volume yang lebih rendah
-            return conditions_met >= 2 and volume_condition
+            return conditions_met >= config['buy_condition_count']['<15_rsi'] and volume_condition
         elif latest['RSI'] < 20:  # Very oversold
-            # Perlu 3 kondisi + volume yang lebih rendah
-            return conditions_met >= 3 and volume_condition
+            return conditions_met >= config['buy_condition_count']['<20_rsi'] and volume_condition
         else:  # Normal conditions
-            # Perlu 3 kondisi + volume yang lebih tinggi
-            return conditions_met >= 3 and volume_condition
+            return conditions_met >= config['buy_condition_count']['normal'] and volume_condition
 
     except Exception as e:
         logging.error(f"Buy condition analysis failed for {symbol}: {e}")
