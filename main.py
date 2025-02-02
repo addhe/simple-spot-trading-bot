@@ -168,14 +168,16 @@ def should_buy(symbol, current_price, advanced_indicators=True, config=None):
     default_config = {
         'min_data_points': 50,
         'volume_multipliers': {
-            'default': 1.2,
-            '<20_rsi': 1.1,
-            '<15_rsi': 1.0
+            'default': 1.5,
+            '<20_rsi': 1.2,
+            '<15_rsi': 1.1
         },
+        'rsi_oversold': 30,
+        'price_discount_threshold': 0.95,
         'buy_condition_count': {
-            'normal': 2,  # Lowered to 2 since we've removed some checks
-            '<20_rsi': 2,
-            '<15_rsi': 1
+            'normal': 3,
+            '<20_rsi': 3,
+            '<15_rsi': 2
         }
     }
 
@@ -227,10 +229,12 @@ def should_buy(symbol, current_price, advanced_indicators=True, config=None):
 
         volume_condition = current_volume > (avg_volume * volume_requirement)
 
-        # Simplified Buy Conditions: Removed 'oversold' and 'discount'
+        # Basic Buy Conditions
         buy_conditions = {
             'price_below_ma50': current_price < latest['MA_50'],
-            'bullish_trend': latest['MA_50'] > latest['MA_200']
+            'bullish_trend': latest['MA_50'] > latest['MA_200'],
+            'oversold': latest['RSI'] < config['rsi_oversold'],
+            'discount': current_price < latest['MA_200'] * config['price_discount_threshold']
         }
 
         # Count how many conditions are met
@@ -257,10 +261,17 @@ def should_buy(symbol, current_price, advanced_indicators=True, config=None):
                               f"Individual Conditions:\n"
                               f"- Price Below MA50: {buy_conditions['price_below_ma50']}\n"
                               f"- Bullish Trend: {buy_conditions['bullish_trend']}\n"
+                              f"- Oversold: {buy_conditions['oversold']}\n"
+                              f"- Price Discount: {buy_conditions['discount']}\n"
                               f"Total Conditions Met: {conditions_met}/{len(buy_conditions)}")
 
-        # Adjusted decision making based on fewer conditions
-        return conditions_met >= config['buy_condition_count']['normal'] and volume_condition
+        # Flexible decision making based on RSI levels
+        if latest['RSI'] < 15:  # Extremely oversold
+            return conditions_met >= config['buy_condition_count']['<15_rsi'] and volume_condition
+        elif latest['RSI'] < 20:  # Very oversold
+            return conditions_met >= config['buy_condition_count']['<20_rsi'] and volume_condition
+        else:  # Normal conditions
+            return conditions_met >= config['buy_condition_count']['normal'] and volume_condition
 
     except Exception as e:
         logging.error(f"Buy condition analysis failed for {symbol}: {e}")
