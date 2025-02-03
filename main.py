@@ -1,10 +1,12 @@
+#!/usr/bin/env python
 import os
+import sys
 import time
-import logging
-import sqlite3
-import threading
 import math
-import asyncio
+import threading
+import sqlite3
+import argparse
+import logging
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -48,6 +50,12 @@ from config.settings import (
     TRAILING_STOP,
     MAX_INVESTMENT_PER_TRADE
 )
+
+# Jika parameter STOP_LOSS_PERCENTAGE belum ada di config, tetapkan default di sini:
+try:
+    from config.settings import STOP_LOSS_PERCENTAGE
+except ImportError:
+    STOP_LOSS_PERCENTAGE = 0.02  # contoh: 2%
 
 class TradingBot:
     def __init__(self):
@@ -217,7 +225,7 @@ class TradingBot:
     def should_buy(self, symbol, current_price):
         """Determine whether to buy based on technical analysis"""
         try:
-            conn = sqlite3.connect('table_transactions.db')
+            conn = sqlite3.connect(self.db_path)
             query = f'''
                 SELECT timestamp, close_price, volume
                 FROM historical_data
@@ -229,6 +237,7 @@ class TradingBot:
             conn.close()
 
             if len(df) < 50:
+                self.logger.debug(f"{symbol}: Data historis tidak cukup untuk analisis (hanya {len(df)} data)")
                 return False
 
             # Calculate technical indicators
@@ -251,13 +260,12 @@ class TradingBot:
                 'volume_active': volume_condition
             }
 
+            self.logger.debug(f"{symbol} Buy Analysis: {conditions}")
+            send_telegram_message(f"{symbol} Buy Analysis:\n" +
+                                  "\n".join([f"- {k}: {v}" for k, v in conditions.items()]))
+
             if not all(conditions.values()):
                 self.logger.info(f"{symbol}: Tidak membeli karena kondisi tidak terpenuhi - {conditions}")
-
-            # Log analysis
-            self.logger.info(f"{symbol} Buy Analysis: {conditions}")
-            send_telegram_message(f"{symbol} Buy Analysis:\n" +
-                               "\n".join([f"- {k}: {v}" for k, v in conditions.items()]))
 
             return all(conditions.values())
 
@@ -292,6 +300,7 @@ class TradingBot:
         """Process trading logic for a single symbol"""
         try:
             retries = 3
+            last_price = None
             while retries > 0:
                 last_price = get_last_price(symbol)
                 if last_price:
@@ -306,12 +315,12 @@ class TradingBot:
             # Ambil saldo aset yang tersedia
             balances = get_balances()
             asset = symbol.replace('USDT', '')
-            asset_balance = balances.get(asset, {}).get('free', 0.0)
-            usdt_balance = balances.get('USDT', {}).get('free', 0.0)
+            asset_balance = float(balances.get(asset, {}).get('free', 0.0))
+            usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
 
             # Hitung batas investasi per perdagangan
             total_portfolio_value = usdt_balance + sum(
-                balances[sym.replace("USDT", "")]["free"] * get_last_price(sym)
+                float(balances[sym.replace("USDT", "")]["free"]) * get_last_price(sym)
                 for sym in SYMBOLS if sym.replace("USDT", "") in balances
             )
             max_trade_value = total_portfolio_value * MAX_INVESTMENT_PER_TRADE
@@ -348,7 +357,7 @@ class TradingBot:
                     profit_percentage = ((last_price - last_buy_price) / last_buy_price) * 100
                     highest_price = self.get_highest_price(symbol)
 
-                    # **Trailing Stop: Jual jika turun 2% dari harga tertinggi**
+                    # **Trailing Stop: Jual jika turun dari harga tertinggi**
                     if TRAILING_STOP and highest_price and (last_price < highest_price * (1 - TRAILING_STOP)):
                         self.logger.warning(f"{symbol}: Harga turun dari {highest_price} ke {last_price}, menjual aset")
                         self.sell_asset(symbol, asset_balance)
@@ -383,9 +392,11 @@ class TradingBot:
             try:
                 balances = get_balances()
                 if not balances:
+                    self.logger.warning("Tidak mendapatkan saldo, melewati siklus trade")
+                    time.sleep(CACHE_LIFETIME)
                     continue
 
-                usdt_balance = balances.get('USDT', {}).get('free', 0.0)
+                usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
                 usdt_per_symbol = usdt_balance / len(SYMBOLS) if usdt_balance > 0 else 0
 
                 for symbol in SYMBOLS:
@@ -445,6 +456,11 @@ class TradingBot:
             for thread in threads:
                 thread.start()
 
+            # Jika mode simulasi (hanya untuk satu siklus) kita hentikan setelah satu iterasi.
+            if getattr(self, 'simulate', False):
+                self.logger.info("MODE SIMULASI AKTIF: Selesai satu siklus trading.")
+                self.app_status['running'] = False
+
             # Wait for threads
             while any(thread.is_alive() for thread in threads):
                 time.sleep(1)
@@ -471,7 +487,7 @@ class TradingBot:
             for symbol in SYMBOLS:
                 try:
                     self.client.cancel_open_orders(symbol=symbol)
-                except:
+                except Exception:
                     pass
 
             self.logger.info("Cleanup completed")
@@ -480,10 +496,38 @@ class TradingBot:
 
 def main():
     """Main entry point"""
-    import sys
+    parser = argparse.ArgumentParser(description="Trading Bot Runner")
+    parser.add_argument(
+        "--simulate",
+        action="store_true",
+        help="Jalankan satu siklus simulasi trading (tanpa loop berkelanjutan)"
+    )
+    args = parser.parse_args()
+
     try:
         bot = TradingBot()
-        bot.run()
+        if args.simulate:
+            bot.simulate = True  # Flag untuk mode simulasi
+            # Lakukan satu siklus simulasi: ambil saldo, hitung alokasi, dan proses setiap simbol.
+            bot.logger.info("MODE SIMULASI AKTIF: Menjalankan satu siklus trading untuk setiap simbol")
+            balances = get_balances()
+            if not balances:
+                bot.logger.error("Saldo tidak dapat diambil. Pastikan koneksi ke API Binance berjalan dengan baik.")
+                sys.exit(1)
+            usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
+            if usdt_balance <= 0:
+                bot.logger.error("Saldo USDT kosong. Simulasi tidak dapat dijalankan.")
+                sys.exit(1)
+            usdt_per_symbol = usdt_balance / len(SYMBOLS)
+            bot.logger.debug(f"Saldo USDT: {usdt_balance}, Alokasi per simbol: {usdt_per_symbol}")
+
+            for symbol in SYMBOLS:
+                bot.logger.info(f"Simulasi trade untuk {symbol} dengan alokasi {usdt_per_symbol} USDT")
+                bot.process_symbol_trade(symbol, usdt_per_symbol)
+            # Setelah simulasi selesai, hentikan bot
+            bot.app_status['running'] = False
+        else:
+            bot.run()
     except Exception as e:
         logging.critical(f"Failed to start trading bot: {e}")
         sys.exit(1)
