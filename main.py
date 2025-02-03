@@ -57,6 +57,52 @@ class TradingBot:
         self.initialize_client()
         self.setup_database()
 
+def buy_asset(self, symbol, quantity):
+    """Melakukan pembelian aset di Binance"""
+    try:
+        order = self.client.order_market_buy(
+            symbol=symbol,
+            quantity=quantity
+        )
+        self.logger.info(f"✅ Buy order placed: {order}")
+        return order
+    except BinanceAPIException as e:
+        self.logger.error(f"Binance API Exception during buy: {e}")
+    except BinanceOrderException as e:
+        self.logger.error(f"Binance Order Exception during buy: {e}")
+    except Exception as e:
+        self.logger.error(f"Unexpected error during buy: {e}")
+
+    def sell_asset(self, symbol, quantity):
+        """Melakukan penjualan aset di Binance"""
+        try:
+            order = self.client.order_market_sell(
+                symbol=symbol,
+                quantity=quantity
+            )
+            self.logger.info(f"✅ Sell order placed: {order}")
+            return order
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API Exception during sell: {e}")
+        except BinanceOrderException as e:
+            self.logger.error(f"Binance Order Exception during sell: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected error during sell: {e}")
+
+    def get_min_notional(self, symbol):
+        """Ambil batas minimal notional trading dari Binance"""
+        try:
+            exchange_info = self.client.get_exchange_info()
+            for s in exchange_info['symbols']:
+                if s['symbol'] == symbol:
+                    for f in s['filters']:
+                        if f['filterType'] == 'MIN_NOTIONAL':
+                            return float(f['minNotional'])
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting min notional for {symbol}: {e}")
+            return None
+
     def get_historical_klines(self, symbol, interval, start_time):
         try:
             klines = self.client.get_historical_klines(symbol, interval, start_str=start_time)
@@ -215,12 +261,42 @@ class TradingBot:
             self.logger.error(f"Buy analysis failed for {symbol}: {e}")
             return False
 
+    def get_highest_price(self, symbol):
+        """Mengambil harga tertinggi dari database dalam 24 jam terakhir"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT MAX(close_price)
+                FROM historical_data
+                WHERE symbol = ?
+                AND timestamp >= datetime('now', '-24 hours', 'localtime')
+            """, (symbol,))
+            result = cursor.fetchone()
+            conn.close()
+
+            if result and result[0]:
+                return float(result[0])
+            else:
+                return None  # Tidak ada data
+
+        except Exception as e:
+            self.logger.error(f"Error getting highest price for {symbol}: {e}")
+            return None
+
     def process_symbol_trade(self, symbol, usdt_per_symbol):
         """Process trading logic for a single symbol"""
         try:
-            last_price = get_last_price(symbol)
+            retries = 3
+            while retries > 0:
+                last_price = get_last_price(symbol)
+                if last_price:
+                    break
+                self.logger.warning(f"Tidak bisa mendapatkan harga {symbol}, mencoba lagi ({retries})")
+                time.sleep(2)
+                retries -= 1
             if not last_price:
-                self.logger.warning(f"Tidak bisa mendapatkan harga terakhir untuk {symbol}")
+                self.logger.error(f"Gagal mendapatkan harga terakhir untuk {symbol}, melewati trade")
                 return
 
             # Ambil saldo aset yang tersedia
