@@ -16,12 +16,12 @@ SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 MAX_INVESTMENT_PER_TRADE = 0.1  # Maksimal 10% dari total portfolio per trade
 STOP_LOSS_PERCENTAGE = 0.05     # Cut loss pada -5%
 TRAILING_STOP = 0.02            # Trailing stop 2% dari harga tertinggi
-BUY_MULTIPLIER = 0.98           # Buy price multiplier
+BUY_MULTIPLIER = 0.99           # Buy price multiplier
 SELL_MULTIPLIER = 1.011         # Sell price multiplier
 TOLERANCE = 0.02                # Price tolerance
 
 # Time Intervals
-INTERVAL = '1m'                 # Candlestick interval (1 minute)
+INTERVAL = '5m'                 # Candlestick interval (5 minute)
 CACHE_LIFETIME = 300            # Cache lifetime in seconds (5 minutes)
 STATUS_INTERVAL = 3600          # Status check interval in seconds (1 hour)
 
