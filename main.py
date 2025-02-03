@@ -45,6 +45,7 @@ from config.settings import (
     RSI_OVERSOLD,
     RSI_OVERBOUGHT,
     RSI_PERIOD,
+    TRAILING_STOP,
     MAX_INVESTMENT_PER_TRADE
 )
 
