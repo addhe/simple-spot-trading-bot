@@ -241,7 +241,7 @@ class TradingBot:
             # Volume analysis
             avg_volume = df['volume'].tail(10).mean()
             current_volume = df['volume'].iloc[-1]
-            volume_condition = current_volume > (avg_volume * 1.5)
+            volume_condition = current_volume > (avg_volume * 1.2)
 
             # Buy conditions
             conditions = {
@@ -250,6 +250,9 @@ class TradingBot:
                 'oversold': latest['RSI'] < RSI_OVERSOLD,
                 'volume_active': volume_condition
             }
+
+            if not all(conditions.values()):
+                self.logger.info(f"{symbol}: Tidak membeli karena kondisi tidak terpenuhi - {conditions}")
 
             # Log analysis
             self.logger.info(f"{symbol} Buy Analysis: {conditions}")
@@ -328,6 +331,10 @@ class TradingBot:
 
                     # Pastikan order memenuhi batas minimal perdagangan
                     min_notional = self.get_min_notional(symbol)
+                    if min_notional and (quantity * last_price) < min_notional:
+                        self.logger.warning(f"{symbol}: Order terlalu kecil (Min Notional: {min_notional}, Order: {quantity * last_price})")
+                        return  # Jangan lanjutkan order
+
                     if min_notional and (quantity * last_price) >= min_notional:
                         self.logger.info(f"{symbol}: Membeli {quantity} unit pada harga {last_price}")
                         self.buy_asset(symbol, quantity)
