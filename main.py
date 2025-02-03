@@ -57,21 +57,21 @@ class TradingBot:
         self.initialize_client()
         self.setup_database()
 
-def buy_asset(self, symbol, quantity):
-    """Melakukan pembelian aset di Binance"""
-    try:
-        order = self.client.order_market_buy(
-            symbol=symbol,
-            quantity=quantity
-        )
-        self.logger.info(f"✅ Buy order placed: {order}")
-        return order
-    except BinanceAPIException as e:
-        self.logger.error(f"Binance API Exception during buy: {e}")
-    except BinanceOrderException as e:
-        self.logger.error(f"Binance Order Exception during buy: {e}")
-    except Exception as e:
-        self.logger.error(f"Unexpected error during buy: {e}")
+    def buy_asset(self, symbol, quantity):
+        """Melakukan pembelian aset di Binance"""
+        try:
+            order = self.client.order_market_buy(
+                symbol=symbol,
+                quantity=quantity
+            )
+            self.logger.info(f"✅ Buy order placed: {order}")
+            return order
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API Exception during buy: {e}")
+        except BinanceOrderException as e:
+            self.logger.error(f"Binance Order Exception during buy: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected error during buy: {e}")
 
     def sell_asset(self, symbol, quantity):
         """Melakukan penjualan aset di Binance"""
