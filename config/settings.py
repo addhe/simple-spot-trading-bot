@@ -16,9 +16,9 @@ SYMBOLS = ['USDCUSDT', 'ETHUSDT', 'SOLUSDT']
 MAX_INVESTMENT_PER_TRADE = 0.1  # Maksimal 10% dari total portfolio per trade
 STOP_LOSS_PERCENTAGE = 0.05     # Cut loss pada -5%
 TRAILING_STOP = 0.02            # Trailing stop 2% dari harga tertinggi
-BUY_MULTIPLIER = 0.925          # Buy price multiplier
+BUY_MULTIPLIER = 0.98           # Buy price multiplier
 SELL_MULTIPLIER = 1.011         # Sell price multiplier
-TOLERANCE = 0.01                # Price tolerance
+TOLERANCE = 0.02                # Price tolerance
 
 # Time Intervals
 INTERVAL = '1m'                 # Candlestick interval (1 minute)
@@ -28,7 +28,7 @@ STATUS_INTERVAL = 3600          # Status check interval in seconds (1 hour)
 # Technical Analysis Parameters
 RSI_PERIOD = 14                 # Period for RSI calculation
 RSI_OVERBOUGHT = 70            # RSI overbought threshold
-RSI_OVERSOLD = 30              # RSI oversold threshold
+RSI_OVERSOLD = 40              # RSI oversold threshold
 
 # Database Configuration
 DB_FILE = 'table_transactions.db'

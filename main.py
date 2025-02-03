@@ -41,7 +41,10 @@ from config.settings import (
     BUY_MULTIPLIER,
     SELL_MULTIPLIER,
     TOLERANCE,
-    STATUS_INTERVAL
+    STATUS_INTERVAL,
+    RSI_OVERSOLD,
+    RSI_OVERBOUGHT,
+    RSI_PERIOD
 )
 
 class TradingBot:
@@ -196,7 +199,7 @@ class TradingBot:
             conditions = {
                 'price_below_ma50': current_price < latest['MA_50'],
                 'bullish_trend': latest['MA_50'] > latest['MA_200'],
-                'oversold': latest['RSI'] < 30,
+                'oversold': latest['RSI'] < RSI_OVERSOLD,
                 'volume_active': volume_condition
             }
 
@@ -216,30 +219,70 @@ class TradingBot:
         try:
             last_price = get_last_price(symbol)
             if not last_price:
+                self.logger.warning(f"Tidak bisa mendapatkan harga terakhir untuk {symbol}")
                 return
 
+            # Ambil saldo aset yang tersedia
             balances = get_balances()
             asset = symbol.replace('USDT', '')
             asset_balance = balances.get(asset, {}).get('free', 0.0)
+            usdt_balance = balances.get('USDT', {}).get('free', 0.0)
 
+            # Hitung batas investasi per perdagangan
+            total_portfolio_value = usdt_balance + sum(
+                balances[sym.replace("USDT", "")]["free"] * get_last_price(sym)
+                for sym in SYMBOLS if sym.replace("USDT", "") in balances
+            )
+            max_trade_value = total_portfolio_value * MAX_INVESTMENT_PER_TRADE
+
+            if usdt_per_symbol > max_trade_value:
+                self.logger.info(f"{symbol}: Menyesuaikan investasi dari {usdt_per_symbol} ke {max_trade_value}")
+                usdt_per_symbol = max_trade_value
+
+            # 🚀 **Kondisi Pembelian**
             if asset_balance == 0 and usdt_per_symbol > 0:
                 if self.should_buy(symbol, last_price):
+                    # Hitung jumlah pembelian
                     quantity = (usdt_per_symbol * BUY_MULTIPLIER) / last_price
                     step_size = get_symbol_step_size(symbol)
                     if step_size:
                         quantity = math.floor(quantity / step_size) * step_size
 
+                    # Pastikan order memenuhi batas minimal perdagangan
                     min_notional = self.get_min_notional(symbol)
                     if min_notional and (quantity * last_price) >= min_notional:
+                        self.logger.info(f"{symbol}: Membeli {quantity} unit pada harga {last_price}")
                         self.buy_asset(symbol, quantity)
+                    else:
+                        self.logger.warning(f"{symbol}: Order tidak memenuhi batas minimal perdagangan")
 
+            # 🚨 **Kondisi Penjualan**
             elif asset_balance > 0:
                 last_buy_price = get_last_buy_price(symbol)
-                if last_buy_price and last_price >= last_buy_price * SELL_MULTIPLIER:
-                    self.sell_asset(symbol, asset_balance)
+                if last_buy_price:
+                    profit_percentage = ((last_price - last_buy_price) / last_buy_price) * 100
+                    highest_price = self.get_highest_price(symbol)
+
+                    # **Trailing Stop: Jual jika turun 2% dari harga tertinggi**
+                    if TRAILING_STOP and highest_price and (last_price < highest_price * (1 - TRAILING_STOP)):
+                        self.logger.warning(f"{symbol}: Harga turun dari {highest_price} ke {last_price}, menjual aset")
+                        self.sell_asset(symbol, asset_balance)
+                        return
+
+                    # **Take Profit: Jual jika harga naik >= SELL_MULTIPLIER**
+                    if last_price >= last_buy_price * SELL_MULTIPLIER:
+                        self.logger.info(f"{symbol}: Keuntungan {profit_percentage:.2f}%, menjual aset")
+                        self.sell_asset(symbol, asset_balance)
+                        return
+
+                    # **Stop Loss: Jual jika rugi lebih dari STOP_LOSS_PERCENTAGE**
+                    if profit_percentage <= -STOP_LOSS_PERCENTAGE * 100:
+                        self.logger.error(f"{symbol}: Kerugian {profit_percentage:.2f}%, menjual aset untuk cut loss")
+                        self.sell_asset(symbol, asset_balance)
+                        return
 
         except Exception as e:
-            self.logger.error(f"Error processing trade for {symbol}: {e}")
+            self.logger.error(f"⚠️ Error processing trade for {symbol}: {e}")
             self.handle_symbol_error(symbol, e)
 
     def handle_symbol_error(self, symbol, error):
