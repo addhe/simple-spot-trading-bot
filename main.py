@@ -259,7 +259,7 @@ class TradingBot:
                 'oversold': latest['RSI'] < RSI_OVERSOLD,
                 'volume_active': volume_condition
             }
-
+            self.logger.debug(f"{symbol}: current_price={current_price}, MA_50={latest['MA_50']}, MA_200={latest['MA_200']}, RSI={latest['RSI']}")
             self.logger.debug(f"{symbol} Buy Analysis: {conditions}")
             send_telegram_message(f"{symbol} Buy Analysis:\n" +
                                   "\n".join([f"- {k}: {v}" for k, v in conditions.items()]))
