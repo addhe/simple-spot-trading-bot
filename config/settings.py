@@ -13,7 +13,7 @@ TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID_PROD', '')
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
 # Trading Parameters
-MAX_INVESTMENT_PER_TRADE = 0.1  # Maksimal 10% dari total portfolio per trade
+MAX_INVESTMENT_PER_TRADE = 0.5  # Maksimal 70% dari total portfolio per trade
 STOP_LOSS_PERCENTAGE = 0.05     # Cut loss pada -5%
 TRAILING_STOP = 0.02            # Trailing stop 2% dari harga tertinggi
 BUY_MULTIPLIER = 0.99           # Buy price multiplier
