@@ -44,7 +44,8 @@ from config.settings import (
     STATUS_INTERVAL,
     RSI_OVERSOLD,
     RSI_OVERBOUGHT,
-    RSI_PERIOD
+    RSI_PERIOD,
+    MAX_INVESTMENT_PER_TRADE
 )
 
 class TradingBot:
