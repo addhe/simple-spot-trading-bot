@@ -88,3 +88,10 @@ MIN_24H_VOLUME = {                 # Minimum 24h volume in USDT
 # Database Configuration
 DB_FILE = 'table_transactions.db'
 MAX_DATABASE_RETRIES = 3       # Maximum database connection retries
+
+# Minimum Trade Requirements
+MIN_TRADE_AMOUNT = {
+    'BTCUSDT': 0.0001,  # Minimum BTC amount
+    'ETHUSDT': 0.001,   # Minimum ETH amount
+    'SOLUSDT': 0.1      # Minimum SOL amount
+}
