@@ -9,10 +9,14 @@ import argparse
 import logging
 import numpy as np
 import pandas as pd
+import functools
+import requests
+
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Import local modules
 from src.get_balances import get_balances
@@ -57,6 +61,18 @@ try:
 except ImportError:
     STOP_LOSS_PERCENTAGE = 0.02  # contoh: 2%
 
+
+def retry_on_api_error(func):
+    @functools.wraps(func)
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=lambda e: isinstance(e, (BinanceAPIException, requests.exceptions.RequestException))
+    )
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
 class TradingBot:
     def __init__(self):
         # Pastikan db_path sudah didefinisikan sebelum dipakai fungsi lain
@@ -65,6 +81,97 @@ class TradingBot:
         self.initialize_state()
         self.initialize_client()
         self.setup_database()
+
+        # Risk management parameters
+        self.daily_loss_limit = -0.05  # 5% maximum daily loss
+        self.max_drawdown_limit = -0.15  # 15% maximum drawdown
+        self.position_size_limit = 0.1  # Maximum 10% of portfolio per position
+
+        # Performance tracking
+        self.daily_pnl = 0.0
+        self.total_trades = 0
+        self.winning_trades = 0
+        self.initial_portfolio_value = 0.0
+        self.peak_portfolio_value = 0.0
+
+        # Initialize performance tracking
+        self._initialize_performance_tracking()
+
+    def _initialize_performance_tracking(self):
+        """Initialize performance tracking metrics"""
+        try:
+            balances = get_balances()
+            if balances:
+                total_value = float(balances.get('USDT', {}).get('free', 0.0))
+                for symbol in SYMBOLS:
+                    asset = symbol.replace('USDT', '')
+                    if asset in balances:
+                        asset_balance = float(balances[asset]['free'])
+                        price = get_last_price(symbol)
+                        if price:
+                            total_value += asset_balance * price
+
+                self.initial_portfolio_value = total_value
+                self.peak_portfolio_value = total_value
+                self.logger.info(f"Initial portfolio value: {total_value} USDT")
+        except Exception as e:
+            self.logger.error(f"Error initializing performance tracking: {e}")
+
+    def _update_performance_metrics(self, trade_type, entry_price, exit_price, quantity):
+        """Update performance metrics after each trade"""
+        if trade_type == 'SELL':
+            self.total_trades += 1
+            pnl = (exit_price - entry_price) * quantity
+            self.daily_pnl += pnl
+
+            if pnl > 0:
+                self.winning_trades += 1
+
+            win_rate = (self.winning_trades / self.total_trades) * 100 if self.total_trades > 0 else 0
+            self.logger.info(f"Trade Performance:")
+            self.logger.info(f"Win Rate: {win_rate:.2f}%")
+            self.logger.info(f"Daily P&L: {self.daily_pnl:.2f} USDT")
+
+            # Check risk limits
+            current_portfolio_value = self._get_total_portfolio_value()
+            daily_return = (current_portfolio_value - self.initial_portfolio_value) / self.initial_portfolio_value
+            drawdown = (current_portfolio_value - self.peak_portfolio_value) / self.peak_portfolio_value
+
+            if current_portfolio_value > self.peak_portfolio_value:
+                self.peak_portfolio_value = current_portfolio_value
+
+            # Check risk limits
+            if daily_return <= self.daily_loss_limit:
+                self.logger.warning(f"⚠️ Daily loss limit reached: {daily_return:.2%}")
+                send_telegram_message(f"⚠️ Daily loss limit reached: {daily_return:.2%}")
+                return False
+
+            if drawdown <= self.max_drawdown_limit:
+                self.logger.warning(f"⚠️ Maximum drawdown limit reached: {drawdown:.2%}")
+                send_telegram_message(f"⚠️ Maximum drawdown limit reached: {drawdown:.2%}")
+                return False
+
+            return True
+
+    def _get_total_portfolio_value(self):
+        """Calculate total portfolio value"""
+        try:
+            balances = get_balances()
+            if not balances:
+                return 0.0
+
+            total_value = float(balances.get('USDT', {}).get('free', 0.0))
+            for symbol in SYMBOLS:
+                asset = symbol.replace('USDT', '')
+                if asset in balances:
+                    asset_balance = float(balances[asset]['free'])
+                    price = get_last_price(symbol)
+                    if price:
+                        total_value += asset_balance * price
+            return total_value
+        except Exception as e:
+            self.logger.error(f"Error calculating portfolio value: {e}")
+            return 0.0
 
     def buy_asset(self, symbol, quantity):
         """Melakukan pembelian aset di Binance"""
@@ -81,6 +188,69 @@ class TradingBot:
             self.logger.error(f"Binance Order Exception during buy: {e}")
         except Exception as e:
             self.logger.error(f"Unexpected error during buy: {e}")
+
+    @retry_on_api_error
+    def buy_asset_with_retry(self, symbol, quantity):
+        """Melakukan pembelian aset di Binance dengan retry mechanism"""
+        try:
+            # Validate minimum order size
+            min_notional = self.get_min_notional(symbol)
+            current_price = get_last_price(symbol)
+
+            if not current_price:
+                raise ValueError(f"Could not get current price for {symbol}")
+
+            order_value = quantity * current_price
+
+            if min_notional and order_value < min_notional:
+                self.logger.error(f"Order value {order_value} is below minimum notional {min_notional} for {symbol}")
+                return None
+
+            # Check internet connection
+            if not self._check_internet_connection():
+                raise ConnectionError("No internet connection available")
+
+            # Check if we have enough balance
+            balances = get_balances()
+            usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
+
+            if usdt_balance < order_value:
+                self.logger.error(f"Insufficient USDT balance. Required: {order_value}, Available: {usdt_balance}")
+                return None
+
+            order = self.client.order_market_buy(
+                symbol=symbol,
+                quantity=quantity
+            )
+
+            # Log successful transaction
+            self.logger.info(f"✅ Buy order successful for {symbol}:")
+            self.logger.info(f"   Quantity: {quantity}")
+            self.logger.info(f"   Price: {current_price}")
+            self.logger.info(f"   Total Value: {order_value} USDT")
+
+            # Save transaction details
+            save_transaction(symbol, 'BUY', quantity, current_price, order_value)
+
+            return order
+
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API Exception during buy: {e}")
+            raise
+        except BinanceOrderException as e:
+            self.logger.error(f"Binance Order Exception during buy: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Unexpected error during buy: {e}")
+            raise
+
+    def _check_internet_connection(self):
+        """Check if internet connection is available"""
+        try:
+            requests.get("https://api.binance.com", timeout=5)
+            return True
+        except requests.RequestException:
+            return False
 
     def sell_asset(self, symbol, quantity):
         """Melakukan penjualan aset di Binance"""
@@ -222,6 +392,22 @@ class TradingBot:
         finally:
             conn.close()
 
+    def _calculate_bollinger_bands(self, prices, window=20, num_std=2):
+        """Calculate Bollinger Bands"""
+        rolling_mean = prices.rolling(window=window).mean()
+        rolling_std = prices.rolling(window=window).std()
+        upper_band = rolling_mean + (rolling_std * num_std)
+        lower_band = rolling_mean - (rolling_std * num_std)
+        return upper_band, rolling_mean, lower_band
+
+    def _calculate_macd(self, prices, fast=12, slow=26, signal=9):
+        """Calculate MACD"""
+        exp1 = prices.ewm(span=fast, adjust=False).mean()
+        exp2 = prices.ewm(span=slow, adjust=False).mean()
+        macd = exp1 - exp2
+        signal_line = macd.ewm(span=signal, adjust=False).mean()
+        return macd, signal_line
+
     def should_buy(self, symbol, current_price):
         """Determine whether to buy based on technical analysis"""
         try:
@@ -240,34 +426,57 @@ class TradingBot:
                 self.logger.debug(f"{symbol}: Data historis tidak cukup untuk analisis (hanya {len(df)} data)")
                 return False
 
-            # Calculate technical indicators
+            # Calculate basic indicators
             df['MA_50'] = df['close_price'].rolling(window=50).mean()
             df['MA_200'] = df['close_price'].rolling(window=200).mean()
             df['RSI'] = _calculate_rsi(df['close_price'])
 
+            # Calculate Bollinger Bands
+            df['BB_upper'], df['BB_middle'], df['BB_lower'] = self._calculate_bollinger_bands(df['close_price'])
+
+            # Calculate MACD
+            df['MACD'], df['MACD_signal'] = self._calculate_macd(df['close_price'])
+            df['MACD_hist'] = df['MACD'] - df['MACD_signal']
+
             latest = df.iloc[-1]
+            prev = df.iloc[-2]
 
             # Volume analysis
             avg_volume = df['volume'].tail(10).mean()
             current_volume = df['volume'].iloc[-1]
             volume_condition = current_volume > (avg_volume * 1.2)
 
-            # Buy conditions
+            # Enhanced buy conditions
             conditions = {
                 'price_below_ma50': current_price < latest['MA_50'],
                 'bullish_trend': latest['MA_50'] > latest['MA_200'],
                 'oversold': latest['RSI'] < RSI_OVERSOLD,
-                'volume_active': volume_condition
+                'volume_active': volume_condition,
+                'price_near_bb_lower': current_price <= latest['BB_lower'] * 1.02,  # Within 2% of lower BB
+                'macd_bullish': latest['MACD_hist'] > 0 and prev['MACD_hist'] < 0,  # MACD crossover
             }
-            self.logger.debug(f"{symbol}: current_price={current_price}, MA_50={latest['MA_50']}, MA_200={latest['MA_200']}, RSI={latest['RSI']}")
+
+            # Calculate confidence score (0-100)
+            confidence_score = sum([
+                1 if conditions['price_below_ma50'] else 0,
+                2 if conditions['bullish_trend'] else 0,
+                2 if conditions['oversold'] else 0,
+                1 if conditions['volume_active'] else 0,
+                2 if conditions['price_near_bb_lower'] else 0,
+                2 if conditions['macd_bullish'] else 0,
+            ]) * 10
+
+            self.logger.debug(f"{symbol}: current_price={current_price}, MA_50={latest['MA_50']}, RSI={latest['RSI']}")
             self.logger.debug(f"{symbol} Buy Analysis: {conditions}")
-            send_telegram_message(f"{symbol} Buy Analysis:\n" +
-                                  "\n".join([f"- {k}: {v}" for k, v in conditions.items()]))
+            self.logger.debug(f"Confidence Score: {confidence_score}%")
 
-            if not all(conditions.values()):
-                self.logger.info(f"{symbol}: Tidak membeli karena kondisi tidak terpenuhi - {conditions}")
+            message = (f"{symbol} Buy Analysis:\n" +
+                      "\n".join([f"- {k}: {v}" for k, v in conditions.items()]) +
+                      f"\nConfidence Score: {confidence_score}%")
+            send_telegram_message(message)
 
-            return all(conditions.values())
+            # Require at least 4 conditions to be met and minimum 60% confidence
+            return sum(conditions.values()) >= 4 and confidence_score >= 60
 
         except Exception as e:
             self.logger.error(f"Buy analysis failed for {symbol}: {e}")
@@ -346,7 +555,7 @@ class TradingBot:
 
                     if min_notional and (quantity * last_price) >= min_notional:
                         self.logger.info(f"{symbol}: Membeli {quantity} unit pada harga {last_price}")
-                        self.buy_asset(symbol, quantity)
+                        self.buy_asset_with_retry(symbol, quantity)
                     else:
                         self.logger.warning(f"{symbol}: Order tidak memenuhi batas minimal perdagangan")
 
