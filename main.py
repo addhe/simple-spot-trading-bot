@@ -52,7 +52,12 @@ from config.settings import (
     RSI_OVERBOUGHT,
     RSI_PERIOD,
     TRAILING_STOP,
-    MAX_INVESTMENT_PER_TRADE
+    MAX_INVESTMENT_PER_TRADE,
+    MIN_24H_VOLUME,
+    MARKET_VOLATILITY_LIMIT,
+    MAX_API_RETRIES,
+    ERROR_SLEEP_TIME,
+    MAX_POSITIONS
 )
 
 # Jika parameter STOP_LOSS_PERCENTAGE belum ada di config, tetapkan default di sini:
@@ -60,7 +65,6 @@ try:
     from config.settings import STOP_LOSS_PERCENTAGE
 except ImportError:
     STOP_LOSS_PERCENTAGE = 0.02  # contoh: 2%
-
 
 def retry_on_api_error(func):
     @functools.wraps(func)
@@ -508,84 +512,98 @@ class TradingBot:
     def process_symbol_trade(self, symbol, usdt_per_symbol):
         """Process trading logic for a single symbol"""
         try:
-            retries = 3
+            # Check if we're in off hours
+            if is_off_hours():
+                self.logger.info(f"{symbol}: Skipping trade during off hours")
+                return
+
+            # Get market stats
+            stats = get_24h_stats(symbol)
+            if not stats:
+                self.logger.error(f"{symbol}: Could not fetch market stats")
+                return
+
+            # Check volume requirements
+            min_required_volume = MIN_24H_VOLUME.get(symbol, 100000)
+            if stats['volume'] < min_required_volume:
+                self.logger.info(f"{symbol}: Insufficient 24h volume (${stats['volume']:.2f} < ${min_required_volume:.2f})")
+                return
+
+            # Check market volatility
+            if abs(stats['price_change']) > MARKET_VOLATILITY_LIMIT * 100:
+                self.logger.info(f"{symbol}: Market too volatile ({abs(stats['price_change']):.1f}%)")
+                return
+
+            # Get current price with retries
+            retries = MAX_API_RETRIES
             last_price = None
             while retries > 0:
                 last_price = get_last_price(symbol)
                 if last_price:
                     break
-                self.logger.warning(f"Tidak bisa mendapatkan harga {symbol}, mencoba lagi ({retries})")
-                time.sleep(2)
+                self.logger.warning(f"Could not get price for {symbol}, retrying ({retries})")
+                time.sleep(ERROR_SLEEP_TIME)
                 retries -= 1
+
             if not last_price:
-                self.logger.error(f"Gagal mendapatkan harga terakhir untuk {symbol}, melewati trade")
+                self.logger.error(f"Failed to get price for {symbol}, skipping trade")
                 return
 
-            # Ambil saldo aset yang tersedia
+            # Get balances
             balances = get_balances()
+            if not balances:
+                self.logger.error("Could not fetch balances")
+                return
+
             asset = symbol.replace('USDT', '')
             asset_balance = float(balances.get(asset, {}).get('free', 0.0))
             usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
 
-            # Hitung batas investasi per perdagangan
-            total_portfolio_value = usdt_balance + sum(
-                float(balances[sym.replace("USDT", "")]["free"]) * get_last_price(sym)
-                for sym in SYMBOLS if sym.replace("USDT", "") in balances
-            )
-            max_trade_value = total_portfolio_value * MAX_INVESTMENT_PER_TRADE
+            # Check if we have too many positions
+            active_positions = sum(1 for sym in SYMBOLS if float(balances.get(sym.replace('USDT', ''), {}).get('free', 0.0)) > 0)
+            if active_positions >= MAX_POSITIONS and asset_balance == 0:
+                self.logger.info(f"Maximum positions ({MAX_POSITIONS}) reached, skipping new trades")
+                return
 
-            if usdt_per_symbol > max_trade_value:
-                self.logger.info(f"{symbol}: Menyesuaikan investasi dari {usdt_per_symbol} ke {max_trade_value}")
-                usdt_per_symbol = max_trade_value
+            # Calculate position size
+            position_size, error = calculate_position_size(symbol, usdt_balance, last_price, stats['volume'])
+            if error:
+                self.logger.info(f"{symbol}: {error}")
+                return
 
-            # 🚀 **Kondisi Pembelian**
-            if asset_balance == 0 and usdt_per_symbol > 0:
+            if position_size > 0:
                 if self.should_buy(symbol, last_price):
-                    # Hitung jumlah pembelian
-                    quantity = (usdt_per_symbol * BUY_MULTIPLIER) / last_price
+                    # Calculate quantity
+                    quantity = position_size / last_price
                     step_size = get_symbol_step_size(symbol)
                     if step_size:
                         quantity = math.floor(quantity / step_size) * step_size
 
-                    # Pastikan order memenuhi batas minimal perdagangan
-                    min_notional = self.get_min_notional(symbol)
-                    if min_notional and (quantity * last_price) < min_notional:
-                        self.logger.warning(f"{symbol}: Order terlalu kecil (Min Notional: {min_notional}, Order: {quantity * last_price})")
-                        return  # Jangan lanjutkan order
+                    self.logger.info(f"{symbol}: Buying {quantity} units at {last_price}")
+                    order = self.buy_asset_with_retry(symbol, quantity)
 
-                    if min_notional and (quantity * last_price) >= min_notional:
-                        self.logger.info(f"{symbol}: Membeli {quantity} unit pada harga {last_price}")
-                        self.buy_asset_with_retry(symbol, quantity)
-                    else:
-                        self.logger.warning(f"{symbol}: Order tidak memenuhi batas minimal perdagangan")
+                    if order:
+                        self.logger.info(f"Buy order successful: {order}")
+                        save_transaction(symbol, 'BUY', quantity, last_price, quantity * last_price)
 
-            # 🚨 **Kondisi Penjualan**
+            # Handle selling logic
             elif asset_balance > 0:
                 last_buy_price = get_last_buy_price(symbol)
                 if last_buy_price:
-                    profit_percentage = ((last_price - last_buy_price) / last_buy_price) * 100
-                    highest_price = self.get_highest_price(symbol)
+                    should_sell, reason = handle_stop_loss(symbol, last_buy_price, last_price, stats['high'])
 
-                    # **Trailing Stop: Jual jika turun dari harga tertinggi**
-                    if TRAILING_STOP and highest_price and (last_price < highest_price * (1 - TRAILING_STOP)):
-                        self.logger.warning(f"{symbol}: Harga turun dari {highest_price} ke {last_price}, menjual aset")
-                        self.sell_asset(symbol, asset_balance)
-                        return
+                    if should_sell:
+                        self.logger.info(f"{symbol}: Selling due to {reason}")
+                        order = self.sell_asset(symbol, asset_balance)
 
-                    # **Take Profit: Jual jika harga naik >= SELL_MULTIPLIER**
-                    if last_price >= last_buy_price * SELL_MULTIPLIER:
-                        self.logger.info(f"{symbol}: Keuntungan {profit_percentage:.2f}%, menjual aset")
-                        self.sell_asset(symbol, asset_balance)
-                        return
-
-                    # **Stop Loss: Jual jika rugi lebih dari STOP_LOSS_PERCENTAGE**
-                    if profit_percentage <= -STOP_LOSS_PERCENTAGE * 100:
-                        self.logger.error(f"{symbol}: Kerugian {profit_percentage:.2f}%, menjual aset untuk cut loss")
-                        self.sell_asset(symbol, asset_balance)
-                        return
+                        if order:
+                            profit = (last_price - last_buy_price) * asset_balance
+                            self.logger.info(f"Sell order successful: {order}")
+                            save_transaction(symbol, 'SELL', asset_balance, last_price, asset_balance * last_price)
+                            self._update_performance_metrics('SELL', last_buy_price, last_price, asset_balance)
 
         except Exception as e:
-            self.logger.error(f"⚠️ Error processing trade for {symbol}: {e}")
+            self.logger.error(f"Error processing trade for {symbol}: {e}")
             self.handle_symbol_error(symbol, e)
 
     def handle_symbol_error(self, symbol, error):
