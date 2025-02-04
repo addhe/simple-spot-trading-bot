@@ -512,11 +512,6 @@ class TradingBot:
     def process_symbol_trade(self, symbol, usdt_per_symbol):
         """Process trading logic for a single symbol"""
         try:
-            # Check if we're in off hours
-            if is_off_hours():
-                self.logger.info(f"{symbol}: Skipping trade during off hours")
-                return
-
             # Get market stats
             stats = get_24h_stats(symbol)
             if not stats:

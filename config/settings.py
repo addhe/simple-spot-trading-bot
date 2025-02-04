@@ -77,12 +77,6 @@ MAX_LOG_SIZE = 20 * 1024 * 1024    # Increase ke 20MB
 LOG_BACKUP_COUNT = 10              # Increase backup files
 DETAILED_LOGGING = True            # Enable detailed logging
 
-# Market Hours Configuration
-MARKET_HOURS = {
-    'PEAK_HOURS': ['09:00-11:00', '14:00-16:00', '20:00-22:00'],  # UTC
-    'OFF_HOURS': ['00:00-08:00'],                                  # Reduced trading during low volume
-}
-
 # Volume Filters
 VOLUME_MA_PERIOD = 24              # 24 periods for volume moving average
 MIN_24H_VOLUME = {                 # Minimum 24h volume in USDT

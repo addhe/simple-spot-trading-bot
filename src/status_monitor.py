@@ -3,7 +3,6 @@ from datetime import datetime
 import pytz
 from config.settings import (
     STATUS_INTERVAL,
-    MARKET_HOURS,
     DETAILED_LOGGING,
     WIN_RATE_THRESHOLD,
     PROFIT_FACTOR_THRESHOLD
@@ -11,28 +10,6 @@ from config.settings import (
 from .send_telegram_message import send_telegram_message
 from .get_balances import get_balances
 from .get_last_price import get_last_price
-
-def is_peak_hours():
-    """Check if current time is within peak trading hours"""
-    utc_now = datetime.now(pytz.UTC)
-    current_time = utc_now.strftime('%H:%M')
-
-    for peak_range in MARKET_HOURS['PEAK_HOURS']:
-        start_time, end_time = peak_range.split('-')
-        if start_time <= current_time <= end_time:
-            return True
-    return False
-
-def is_off_hours():
-    """Check if current time is within off hours"""
-    utc_now = datetime.now(pytz.UTC)
-    current_time = utc_now.strftime('%H:%M')
-
-    for off_range in MARKET_HOURS['OFF_HOURS']:
-        start_time, end_time = off_range.split('-')
-        if start_time <= current_time <= end_time:
-            return True
-    return False
 
 def calculate_performance_metrics(trades):
     """Calculate trading performance metrics"""
@@ -84,6 +61,7 @@ def status_monitor(bot):
             # Prepare status message
             status_msg = [
                 "📊 Trading Bot Status Report",
+                f"Time: {datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC",
                 f"Total Portfolio Value: ${total_value:.2f}",
                 f"USDT Balance: ${balances.get('USDT', {}).get('free', 0.0):.2f}",
                 "\nAsset Positions:",
@@ -103,12 +81,6 @@ def status_monitor(bot):
                     status_msg.append(f"⚠️ Win rate below threshold ({WIN_RATE_THRESHOLD*100}%)")
                 if metrics['profit_factor'] < PROFIT_FACTOR_THRESHOLD:
                     status_msg.append(f"⚠️ Profit factor below threshold ({PROFIT_FACTOR_THRESHOLD})")
-
-            # Add market hours status
-            if is_peak_hours():
-                status_msg.append("\n🟢 Currently in Peak Trading Hours")
-            elif is_off_hours():
-                status_msg.append("\n🔴 Currently in Off Hours - Limited Trading")
 
             send_telegram_message("\n".join(status_msg))
 
