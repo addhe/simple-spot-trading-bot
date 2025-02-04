@@ -24,7 +24,7 @@ from src.get_db_connection import get_db_connection
 from src.get_last_buy_price import get_last_buy_price
 from src.get_last_price import get_last_price
 from src.save_historical_data import save_historical_data
-from src.send_asset_status import send_asset_status
+from src.send_asset_status import send_asset_status, get_24h_stats
 from src.send_telegram_message import send_telegram_message
 from src.status_monitor import status_monitor
 from src.setup_database import setup_database
@@ -34,6 +34,8 @@ from src._validate_kline_data import _validate_kline_data
 from src._calculate_rsi import _calculate_rsi
 from src._perform_extended_analysis import _perform_extended_analysis
 from src.logger import setup_logging
+from src.handle_stop_loss import handle_stop_loss
+from src.calculate_position_size import calculate_position_size
 
 from config.settings import (
     API_KEY,
