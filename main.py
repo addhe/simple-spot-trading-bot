@@ -527,8 +527,9 @@ class TradingBot:
                 return
 
             # Check market volatility
-            if abs(stats['price_change']) > MARKET_VOLATILITY_LIMIT * 100:
-                self.logger.info(f"{symbol}: Market too volatile ({abs(stats['price_change']):.1f}%)")
+            volatility_limit = MARKET_VOLATILITY_LIMIT.get(symbol, 0.05) * 100  # Default 5% if not specified
+            if abs(stats['price_change']) > volatility_limit:
+                self.logger.info(f"{symbol}: Market too volatile ({abs(stats['price_change']):.1f}% > {volatility_limit:.1f}%)")
                 return
 
             # Get current price with retries

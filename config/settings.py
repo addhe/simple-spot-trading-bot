@@ -56,7 +56,11 @@ BB_STD = 2
 # Risk Management
 MAX_POSITIONS = 3                   # Maximum concurrent positions
 MIN_USDT_BALANCE = 100             # Minimum USDT to maintain
-MARKET_VOLATILITY_LIMIT = 0.05     # Don't trade if market volatility > 5%
+MARKET_VOLATILITY_LIMIT = {        # Don't trade if market volatility > limit
+    'BTCUSDT': 0.05,               # 5% for BTC (more stable)
+    'ETHUSDT': 0.08,               # 8% for ETH (moderate volatility)
+    'SOLUSDT': 0.10                # 10% for SOL (higher volatility)
+}
 
 # Rate Limiting
 RATE_LIMIT_PER_MINUTE = 1200       # Binance limit
