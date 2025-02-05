@@ -56,10 +56,10 @@ BB_STD = 2
 # Risk Management
 MAX_POSITIONS = 3                   # Maximum concurrent positions
 MIN_USDT_BALANCE = 100             # Minimum USDT to maintain
-MARKET_VOLATILITY_LIMIT = {        # Don't trade if market volatility > limit
-    'BTCUSDT': 0.05,               # 5% for BTC (more stable)
-    'ETHUSDT': 0.08,               # 8% for ETH (moderate volatility)
-    'SOLUSDT': 0.10                # 10% for SOL (higher volatility)
+MARKET_VOLATILITY_LIMIT = {        # Increased volatility limits
+    'BTCUSDT': 0.08,               # 8% for BTC (increased from 5%)
+    'ETHUSDT': 0.12,               # 12% for ETH (increased from 8%)
+    'SOLUSDT': 0.15                # 15% for SOL (increased from 10%)
 }
 
 # Rate Limiting
@@ -83,10 +83,10 @@ DETAILED_LOGGING = True            # Enable detailed logging
 
 # Volume Filters
 VOLUME_MA_PERIOD = 24              # 24 periods for volume moving average
-MIN_24H_VOLUME = {                 # Minimum 24h volume in USDT
-    'BTCUSDT': 1000000,
-    'ETHUSDT': 500000,
-    'SOLUSDT': 100000
+MIN_24H_VOLUME = {                 # Minimum 24h volume in USDT (reduced requirements)
+    'BTCUSDT': 500000,            # Reduced from 1M to 500K
+    'ETHUSDT': 250000,            # Reduced from 500K to 250K
+    'SOLUSDT': 50000              # Reduced from 100K to 50K
 }
 
 # Database Configuration

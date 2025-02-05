@@ -450,16 +450,16 @@ class TradingBot:
             # Volume analysis
             avg_volume = df['volume'].tail(10).mean()
             current_volume = df['volume'].iloc[-1]
-            volume_condition = current_volume > (avg_volume * 1.2)
+            volume_condition = current_volume > (avg_volume * 1.1)
 
             # Enhanced buy conditions
             conditions = {
-                'price_below_ma50': current_price < latest['MA_50'],
-                'bullish_trend': latest['MA_50'] > latest['MA_200'],
-                'oversold': latest['RSI'] < RSI_OVERSOLD,
-                'volume_active': volume_condition,
-                'price_near_bb_lower': current_price <= latest['BB_lower'] * 1.02,  # Within 2% of lower BB
-                'macd_bullish': latest['MACD_hist'] > 0 and prev['MACD_hist'] < 0,  # MACD crossover
+                'price_below_ma50': current_price < latest['MA_50'] * 1.02,  # Allow price slightly above MA50
+                'bullish_trend': latest['MA_50'] > latest['MA_200'] * 0.98,  # Allow slight bearish trend
+                'oversold': latest['RSI'] < RSI_OVERSOLD * 1.1,  # Increase oversold threshold by 10%
+                'volume_active': current_volume > (avg_volume * 1.1),  # Reduce volume requirement
+                'price_near_bb_lower': current_price <= latest['BB_lower'] * 1.05,  # Within 5% of lower BB
+                'macd_bullish': latest['MACD_hist'] > prev['MACD_hist'],  # Just need increasing MACD
             }
 
             # Calculate confidence score (0-100)
@@ -481,8 +481,8 @@ class TradingBot:
                       f"\nConfidence Score: {confidence_score}%")
             send_telegram_message(message)
 
-            # Require at least 4 conditions to be met and minimum 60% confidence
-            return sum(conditions.values()) >= 4 and confidence_score >= 60
+            # Require at least 3 conditions to be met and minimum 50% confidence
+            return sum(conditions.values()) >= 3 and confidence_score >= 50
 
         except Exception as e:
             self.logger.error(f"Buy analysis failed for {symbol}: {e}")
