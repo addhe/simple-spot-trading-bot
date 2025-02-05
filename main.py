@@ -745,7 +745,7 @@ class TradingBot:
         try:
             threads = [
                 threading.Thread(target=self.trade, daemon=True),
-                threading.Thread(target=status_monitor, daemon=True),
+                threading.Thread(target=lambda: status_monitor(self), daemon=True),
                 threading.Thread(target=self.cleanup_monitor, daemon=True),
                 threading.Thread(target=self.check_app_status, daemon=True)
             ]
