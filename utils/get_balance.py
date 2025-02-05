@@ -118,10 +118,10 @@ def format_telegram_message(balances: Dict[str, Dict[str, float]]) -> str:
     total_portfolio_value = total_usdt  # Start with USDT balance
 
     msg_lines = [
-        "💰 <b>Current Balances Report</b>",
+        "💰 **Current Balances Report**",
         f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "",
-        "📊 <b>Trading Assets:</b>"
+        "📊 **Trading Assets:**"
     ]
 
     # Add each asset balance with USD value
@@ -161,10 +161,10 @@ def format_telegram_message(balances: Dict[str, Dict[str, float]]) -> str:
     # Add USDT balance and portfolio total
     msg_lines.extend([
         "",
-        "💵 <b>USDT Balance:</b>",
+        "💵 **USDT Balance:**",
         f"Available: {total_usdt:.2f} USDT",
         "",
-        "📈 <b>Portfolio Summary:</b>",
+        "📈 **Portfolio Summary:**",
         f"Total Value: ${total_portfolio_value:.2f}"
     ])
 
