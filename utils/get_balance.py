@@ -139,24 +139,27 @@ def format_telegram_message(balances: Dict[str, Dict[str, float]]) -> str:
                 usd_value = total_balance * price
                 total_portfolio_value += usd_value
 
-                # Format balance line
-                balance_line = [
-                    f"<code>{asset}</code>: {free_balance:.8f}",
-                    f"(${usd_value:.2f})"
+                # Format balance line with monospace for numbers
+                balance_parts = [
+                    f"{asset}:",
+                    f"<code>{free_balance:.8f}</code>"
                 ]
 
                 # Add locked balance if exists
                 if locked_balance > 0:
-                    balance_line.insert(1, f"🔒{locked_balance:.8f}")
+                    balance_parts.append(f"🔒<code>{locked_balance:.8f}</code>")
 
-                # Add price
-                balance_line.append(f"@ ${price:.2f}")
+                # Add USD value and price
+                balance_parts.extend([
+                    f"≈ <code>${usd_value:.2f}</code>",
+                    f"@ <code>${price:.2f}</code>"
+                ])
 
-                msg_lines.append(" ".join(balance_line))
+                msg_lines.append(" ".join(balance_parts))
             else:
-                msg_lines.append(f"<code>{asset}</code>: {free_balance:.8f}")
+                msg_lines.append(f"{asset}: <code>{free_balance:.8f}</code>")
                 if locked_balance > 0:
-                    msg_lines[-1] += f" 🔒{locked_balance:.8f}"
+                    msg_lines[-1] += f" 🔒<code>{locked_balance:.8f}</code>"
 
     # Add USDT balance and portfolio total
     msg_lines.extend([
