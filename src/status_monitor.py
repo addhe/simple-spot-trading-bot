@@ -32,31 +32,63 @@ def calculate_performance_metrics(trades):
 
 def status_monitor(bot):
     """Monitor trading status and performance"""
-    while bot.app_status['running'] and bot.app_status['status_thread']:
+    error_count = 0
+    max_errors = 3
+    error_sleep = 60  # Sleep 1 minute after error before retrying
+
+    while bot.app_status['running']:
         try:
+            if not bot.app_status['status_thread']:
+                bot.logger.info("Restarting status monitor thread...")
+                bot.app_status['status_thread'] = True
+                error_count = 0
+
             # Get current balances
             balances = get_balances()
             if not balances:
+                bot.logger.warning("Could not fetch balances")
                 send_telegram_message("⚠️ Warning: Could not fetch balances")
-                time.sleep(STATUS_INTERVAL)
+                time.sleep(error_sleep)
+                error_count += 1
+                if error_count >= max_errors:
+                    bot.logger.error("Status monitor: Too many balance fetch errors")
+                    bot.app_status['status_thread'] = False
                 continue
 
             # Calculate total portfolio value
             total_value = float(balances.get('USDT', {}).get('free', 0.0))
             asset_values = []
 
-            for symbol in bot.symbols:
-                asset = symbol.replace('USDT', '')
-                if asset in balances:
-                    asset_balance = float(balances[asset]['free'])
-                    price = get_last_price(symbol)
-                    if price:
-                        asset_value = asset_balance * price
-                        total_value += asset_value
-                        asset_values.append(f"{asset}: {asset_balance:.8f} (${asset_value:.2f})")
+            # Reset error count on successful balance fetch
+            error_count = 0
+
+            try:
+                symbols = getattr(bot, 'symbols', None) or bot.client.get_all_tickers()
+                for symbol in symbols:
+                    if isinstance(symbol, dict):  # Handle case where symbols come from get_all_tickers
+                        symbol = symbol['symbol']
+                    if not symbol.endswith('USDT'):
+                        continue
+
+                    asset = symbol.replace('USDT', '')
+                    if asset in balances:
+                        asset_balance = float(balances[asset]['free'])
+                        price = get_last_price(symbol)
+                        if price:
+                            asset_value = asset_balance * price
+                            total_value += asset_value
+                            asset_values.append(f"{asset}: {asset_balance:.8f} (${asset_value:.2f})")
+            except Exception as e:
+                bot.logger.error(f"Error processing symbols: {e}")
+                send_telegram_message(f"⚠️ Error processing symbols: {str(e)}")
+                # Continue with partial data rather than failing completely
 
             # Calculate performance metrics
-            metrics = calculate_performance_metrics(bot.trades)
+            try:
+                metrics = calculate_performance_metrics(getattr(bot, 'trades', []))
+            except Exception as e:
+                bot.logger.error(f"Error calculating metrics: {e}")
+                metrics = None
 
             # Prepare status message
             status_msg = [
@@ -85,6 +117,13 @@ def status_monitor(bot):
             send_telegram_message("\n".join(status_msg))
 
         except Exception as e:
+            bot.logger.error(f"Error in status monitor: {e}")
             send_telegram_message(f"⚠️ Error in status monitor: {str(e)}")
+            error_count += 1
+            if error_count >= max_errors:
+                bot.logger.error("Status monitor: Too many consecutive errors")
+                bot.app_status['status_thread'] = False
+            time.sleep(error_sleep)
+            continue
 
         time.sleep(STATUS_INTERVAL)

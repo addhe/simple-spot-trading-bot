@@ -613,25 +613,62 @@ class TradingBot:
 
     def trade(self):
         """Main trading loop"""
-        while self.app_status['running'] and self.app_status['trade_thread']:
+        error_count = 0
+        max_errors = 3
+        error_sleep = 60  # Sleep 1 minute after error
+
+        while self.app_status['running']:
             try:
+                if not self.app_status['trade_thread']:
+                    self.logger.info("Restarting trade thread...")
+                    self.app_status['trade_thread'] = True
+                    error_count = 0
+
+                # Check internet connection first
+                if not self._check_internet_connection():
+                    self.logger.warning("No internet connection, waiting...")
+                    time.sleep(error_sleep)
+                    continue
+
                 balances = get_balances()
                 if not balances:
-                    self.logger.warning("Tidak mendapatkan saldo, melewati siklus trade")
-                    time.sleep(CACHE_LIFETIME)
+                    self.logger.warning("Could not fetch balances, skipping trade cycle")
+                    time.sleep(error_sleep)
+                    error_count += 1
+                    if error_count >= max_errors:
+                        self.logger.error("Trade thread: Too many balance fetch errors")
+                        self.app_status['trade_thread'] = False
                     continue
+
+                # Reset error count on successful balance fetch
+                error_count = 0
 
                 usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
                 usdt_per_symbol = usdt_balance / len(SYMBOLS) if usdt_balance > 0 else 0
 
-                for symbol in SYMBOLS:
-                    if self.error_counts[symbol] < self.MAX_ERRORS:
+                active_symbols = [s for s in SYMBOLS if self.error_counts[s] < self.MAX_ERRORS]
+                if not active_symbols:
+                    self.logger.warning("No active symbols to trade, all have exceeded error threshold")
+                    send_telegram_message("⚠️ Warning: All symbols have exceeded error threshold")
+                    time.sleep(CACHE_LIFETIME)
+                    continue
+
+                for symbol in active_symbols:
+                    try:
                         self.process_symbol_trade(symbol, usdt_per_symbol)
+                    except Exception as e:
+                        self.logger.error(f"Error processing {symbol}: {e}")
+                        self.handle_symbol_error(symbol, e)
+                        continue  # Continue with next symbol
 
             except Exception as e:
                 self.logger.error(f"Critical error in trade function: {e}")
-                self.app_status['trade_thread'] = False
-                break
+                error_count += 1
+                if error_count >= max_errors:
+                    self.logger.error("Trade thread: Too many consecutive errors")
+                    self.app_status['trade_thread'] = False
+                time.sleep(error_sleep)
+                continue
 
             time.sleep(CACHE_LIFETIME)
 
@@ -652,13 +689,46 @@ class TradingBot:
 
     def cleanup_monitor(self):
         """Monitor thread for cleaning up old data"""
-        while self.app_status['running'] and self.app_status['cleanup_thread']:
+        error_count = 0
+        max_errors = 3
+        error_sleep = 60  # Sleep 1 minute after error
+        cleanup_interval = 3600  # Run cleanup every hour
+
+        while self.app_status['running']:
             try:
-                self.cleanup_old_data()
+                if not self.app_status['cleanup_thread']:
+                    self.logger.info("Restarting cleanup monitor thread...")
+                    self.app_status['cleanup_thread'] = True
+                    error_count = 0
+
+                # Attempt database cleanup
+                try:
+                    self.cleanup_old_data()
+                    # Reset error count on successful cleanup
+                    error_count = 0
+                except sqlite3.Error as e:
+                    self.logger.error(f"Database error during cleanup: {e}")
+                    error_count += 1
+                except Exception as e:
+                    self.logger.error(f"Unexpected error during cleanup: {e}")
+                    error_count += 1
+
+                if error_count >= max_errors:
+                    self.logger.error("Cleanup monitor: Too many consecutive errors")
+                    self.app_status['cleanup_thread'] = False
+                    time.sleep(error_sleep)
+                    continue
+
             except Exception as e:
-                self.logger.error(f"Error in cleanup monitor: {e}")
-                self.app_status['cleanup_thread'] = False
-            time.sleep(3600)
+                self.logger.error(f"Critical error in cleanup monitor: {e}")
+                error_count += 1
+                if error_count >= max_errors:
+                    self.logger.error("Cleanup monitor: Too many consecutive errors")
+                    self.app_status['cleanup_thread'] = False
+                time.sleep(error_sleep)
+                continue
+
+            time.sleep(cleanup_interval)
 
     def check_app_status(self):
         """Monitor application status"""
