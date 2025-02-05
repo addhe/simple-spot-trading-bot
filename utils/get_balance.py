@@ -103,9 +103,19 @@ def format_balance(balance: Dict[str, float]) -> str:
     """Format balance for display"""
     return f"Free: {balance['free']:.8f}, Locked: {balance['locked']:.8f}"
 
+def get_last_price(symbol: str) -> Optional[float]:
+    """Get last price for a symbol"""
+    try:
+        ticker = client.get_symbol_ticker(symbol=symbol)
+        return float(ticker['price'])
+    except Exception as e:
+        logger.error(f"Error getting price for {symbol}: {e}")
+        return None
+
 def format_telegram_message(balances: Dict[str, Dict[str, float]]) -> str:
-    """Format balances for Telegram message"""
+    """Format balances for Telegram message with USD values"""
     total_usdt = balances.get('USDT', {}).get('free', 0.0)
+    total_portfolio_value = total_usdt  # Start with USDT balance
 
     msg_lines = [
         "💰 <b>Current Balances Report</b>",
@@ -114,24 +124,48 @@ def format_telegram_message(balances: Dict[str, Dict[str, float]]) -> str:
         "📊 <b>Trading Assets:</b>"
     ]
 
-    # Add each asset balance
+    # Add each asset balance with USD value
     for symbol in SYMBOLS:
         asset = symbol.replace('USDT', '')
         if asset in balances:
             balance = balances[asset]
             free_balance = balance['free']
             locked_balance = balance['locked']
+            total_balance = free_balance + locked_balance
 
-            balance_line = f"{asset}: {free_balance:.8f}"
-            if locked_balance > 0:
-                balance_line += f" 🔒{locked_balance:.8f}"
-            msg_lines.append(balance_line)
+            # Get current price and calculate USD value
+            price = get_last_price(f"{asset}USDT")
+            if price:
+                usd_value = total_balance * price
+                total_portfolio_value += usd_value
 
-    # Add USDT balance at the end
+                # Format balance line
+                balance_line = [
+                    f"{asset}: {free_balance:.8f}",
+                    f"(${usd_value:.2f})"
+                ]
+
+                # Add locked balance if exists
+                if locked_balance > 0:
+                    balance_line.insert(1, f"🔒{locked_balance:.8f}")
+
+                # Add price
+                balance_line.append(f"@ ${price:.2f}")
+
+                msg_lines.append(" ".join(balance_line))
+            else:
+                msg_lines.append(f"{asset}: {free_balance:.8f}")
+                if locked_balance > 0:
+                    msg_lines[-1] += f" 🔒{locked_balance:.8f}"
+
+    # Add USDT balance and portfolio total
     msg_lines.extend([
         "",
         "💵 <b>USDT Balance:</b>",
-        f"Available: {total_usdt:.2f} USDT"
+        f"Available: {total_usdt:.2f} USDT",
+        "",
+        "📈 <b>Portfolio Summary:</b>",
+        f"Total Value: ${total_portfolio_value:.2f}"
     ])
 
     return "\n".join(msg_lines)
