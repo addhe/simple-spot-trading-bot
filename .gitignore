@@ -10,6 +10,8 @@ __pycache__/
 *.db
 
 venv
+logs
+data
 
 # Distribution / packaging
 .Python
