@@ -317,7 +317,9 @@ class TradingBot:
             raise ValueError("Missing API credentials")
 
         try:
-            self.client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
+            self.client = Client(api_key=API_KEY, api_secret=API_SECRET)
+            if BASE_URL:
+                self.client.API_URL = BASE_URL
             self.logger.info("Successfully initialized Binance client")
         except Exception as e:
             self.logger.error(f"Failed to initialize Binance client: {e}")

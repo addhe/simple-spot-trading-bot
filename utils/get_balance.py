@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize Binance client
-client = Client(api_key=API_KEY, api_secret=API_SECRET, testnet=True)
+client = Client(api_key=API_KEY, api_secret=API_SECRET)
 if BASE_URL:
     client.API_URL = BASE_URL
 

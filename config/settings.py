@@ -1,9 +1,9 @@
 import os
 
 # API Configuration
-API_KEY = os.getenv('API_KEY_SPOT_TESTNET_BINANCE', '')
-API_SECRET = os.getenv('API_SECRET_SPOT_TESTNET_BINANCE', '')
-BASE_URL = 'https://testnet.binance.vision/api'
+API_KEY = os.getenv('API_KEY_SPOT_BINANCE', '')
+API_SECRET = os.getenv('API_SECRET_SPOT_BINANCE', '')
+BASE_URL = ''
 
 # Telegram Configuration
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
@@ -13,38 +13,38 @@ TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID', '')
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
 # Portfolio Management
-MAX_INVESTMENT_PER_TRADE = 0.05     # Reduce dari 10% ke 5% untuk risk management yang lebih baik
-PORTFOLIO_STOP_LOSS = 0.15          # Stop trading jika portfolio turun 15%
-DAILY_LOSS_LIMIT = 0.07             # Stop trading jika kerugian harian mencapai 7%
+MAX_INVESTMENT_PER_TRADE = 0.05     # 5% max investment per trade for better risk management
+PORTFOLIO_STOP_LOSS = 0.15          # Stop trading if portfolio drops 15%
+DAILY_LOSS_LIMIT = 0.07             # Stop trading if daily loss reaches 7%
 
 # Position Management
-STOP_LOSS_PERCENTAGE = 0.03         # Reduce dari 5% ke 3% untuk cut loss lebih cepat
+STOP_LOSS_PERCENTAGE = 0.03         # 3% stop loss for quicker cut loss
 TRAILING_STOP = {                   # Custom trailing stop per pair
-    'BTCUSDT': 0.015,              # BTC lebih stabil, trailing stop 1.5%
+    'BTCUSDT': 0.015,              # BTC more stable, 1.5% trailing stop
     'ETHUSDT': 0.02,               # ETH moderate volatility, 2%
-    'SOLUSDT': 0.025               # SOL lebih volatile, 2.5%
+    'SOLUSDT': 0.025               # SOL more volatile, 2.5%
 }
 TAKE_PROFIT = {                     # Take profit targets
-    'BTCUSDT': 1.02,               # 2% profit untuk BTC
-    'ETHUSDT': 1.025,              # 2.5% profit untuk ETH
-    'SOLUSDT': 1.03                # 3% profit untuk SOL
+    'BTCUSDT': 1.02,               # 2% profit for BTC
+    'ETHUSDT': 1.025,              # 2.5% profit for ETH
+    'SOLUSDT': 1.03                # 3% profit for SOL
 }
 
 # Entry Strategy Parameters
-BUY_MULTIPLIER = 0.995              # Slightly higher untuk better entry (0.5% dibawah market)
-SELL_MULTIPLIER = 1.015             # Increase ke 1.5% untuk better profit
-TOLERANCE = 0.01                    # Reduce untuk lebih precise
-MIN_VOLUME_MULTIPLIER = 1.5         # Minimal volume harus 1.5x dari rata-rata
+BUY_MULTIPLIER = 0.995              # 0.5% below market for better entry
+SELL_MULTIPLIER = 1.015             # 1.5% above market for better profit
+TOLERANCE = 0.01                    # Reduced for more precision
+MIN_VOLUME_MULTIPLIER = 1.5         # Minimum volume must be 1.5x average
 
 # Time Intervals
-INTERVAL = '15m'                    # Increase timeframe untuk reduce noise
-CACHE_LIFETIME = 60                 # Reduce ke 1 menit untuk faster response
-STATUS_INTERVAL = 1800              # Reduce ke 30 menit untuk better monitoring
+INTERVAL = '15m'                    # 15-minute timeframe to reduce noise
+CACHE_LIFETIME = 60                 # 1 minute for faster response
+STATUS_INTERVAL = 1800              # 30 minutes for better monitoring
 
 # Technical Analysis Parameters
 RSI_PERIOD = 14
-RSI_OVERBOUGHT = 75                 # Increase untuk stronger confirmation
-RSI_OVERSOLD = 35                   # Decrease untuk stronger confirmation
+RSI_OVERBOUGHT = 75                 # Increased for stronger confirmation
+RSI_OVERSOLD = 35                   # Decreased for stronger confirmation
 
 # Additional Technical Indicators
 MACD_FAST = 12
