@@ -13,7 +13,7 @@ TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID_PROD', '')
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
 # Portfolio Management
-MAX_INVESTMENT_PER_TRADE = 0.05     # 5% max investment per trade for better risk management
+MAX_INVESTMENT_PER_TRADE = 0.25     # 25% max investment per trade (adjusted from 5%)
 PORTFOLIO_STOP_LOSS = 0.15          # Stop trading if portfolio drops 15%
 DAILY_LOSS_LIMIT = 0.07             # Stop trading if daily loss reaches 7%
 
@@ -55,7 +55,7 @@ BB_STD = 2
 
 # Risk Management
 MAX_POSITIONS = 3                   # Maximum concurrent positions
-MIN_USDT_BALANCE = 100             # Minimum USDT to maintain
+MIN_USDT_BALANCE = 50              # Minimum USDT to maintain (adjusted from 100)
 MARKET_VOLATILITY_LIMIT = {        # Don't trade if market volatility > limit
     'BTCUSDT': 0.05,               # 5% for BTC (more stable)
     'ETHUSDT': 0.08,               # 8% for ETH (moderate volatility)
