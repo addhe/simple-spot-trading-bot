@@ -462,6 +462,22 @@ class TradingBot:
                 'macd_bullish': latest['MACD_hist'] > prev['MACD_hist'],  # Just need increasing MACD
             }
 
+            # Detailed analysis logging
+            analysis_details = {
+                'price_below_ma50': f"Price ({current_price:.2f}) vs MA50 ({latest['MA_50']:.2f})",
+                'bullish_trend': f"MA50 ({latest['MA_50']:.2f}) vs MA200 ({latest['MA_200']:.2f})",
+                'oversold': f"RSI ({latest['RSI']:.2f}) vs Threshold ({RSI_OVERSOLD * 1.1:.2f})",
+                'volume_active': f"Volume ({current_volume:.2f}) vs Avg ({avg_volume:.2f})",
+                'price_near_bb_lower': f"Price ({current_price:.2f}) vs BB Lower ({latest['BB_lower']:.2f})",
+                'macd_bullish': f"MACD Hist: Current ({latest['MACD_hist']:.6f}) vs Prev ({prev['MACD_hist']:.6f})"
+            }
+
+            # Log detailed analysis
+            self.logger.info(f"\n{symbol} Technical Analysis:")
+            for condition, detail in analysis_details.items():
+                status = "✅" if conditions[condition] else "❌"
+                self.logger.info(f"{status} {condition}: {detail}")
+
             # Calculate confidence score (0-100)
             confidence_score = sum([
                 1 if conditions['price_below_ma50'] else 0,
@@ -472,13 +488,17 @@ class TradingBot:
                 2 if conditions['macd_bullish'] else 0,
             ]) * 10
 
-            self.logger.debug(f"{symbol}: current_price={current_price}, MA_50={latest['MA_50']}, RSI={latest['RSI']}")
-            self.logger.debug(f"{symbol} Buy Analysis: {conditions}")
-            self.logger.debug(f"Confidence Score: {confidence_score}%")
+            self.logger.info(f"Confidence Score: {confidence_score}%")
+            self.logger.info(f"Conditions Met: {sum(conditions.values())}/6")
 
-            message = (f"{symbol} Buy Analysis:\n" +
-                      "\n".join([f"- {k}: {v}" for k, v in conditions.items()]) +
-                      f"\nConfidence Score: {confidence_score}%")
+            # Format message for Telegram
+            message = f"{symbol} Technical Analysis:\n"
+            for condition, detail in analysis_details.items():
+                status = "✅" if conditions[condition] else "❌"
+                message += f"{status} {condition}: {detail}\n"
+            message += f"\nConfidence Score: {confidence_score}%\n"
+            message += f"Conditions Met: {sum(conditions.values())}/6"
+
             send_telegram_message(message)
 
             # Require at least 3 conditions to be met and minimum 50% confidence
