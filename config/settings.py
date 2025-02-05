@@ -13,7 +13,7 @@ TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID_PROD', '')
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
 # Portfolio Management
-MAX_INVESTMENT_PER_TRADE = 0.25     # 25% max investment per trade (adjusted from 5%)
+MAX_INVESTMENT_PER_TRADE = 0.50     # 50% max investment per trade (adjusted from 25%)
 PORTFOLIO_STOP_LOSS = 0.15          # Stop trading if portfolio drops 15%
 DAILY_LOSS_LIMIT = 0.07             # Stop trading if daily loss reaches 7%
 
