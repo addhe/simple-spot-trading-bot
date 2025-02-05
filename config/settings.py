@@ -3,11 +3,11 @@ import os
 # API Configuration
 API_KEY = os.getenv('API_KEY_SPOT_BINANCE', '')
 API_SECRET = os.getenv('API_SECRET_SPOT_BINANCE', '')
-BASE_URL = ''
+BASE_URL = 'https://api.binance.com/api'
 
 # Telegram Configuration
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
-TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID', '')
+TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID_PROD', '')
 
 # Trading Pairs Configuration
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
