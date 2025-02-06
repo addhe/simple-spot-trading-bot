@@ -88,6 +88,10 @@ class TradingBot:
         self.initialize_client()
         self.setup_database()
 
+        # Inisialisasi parameter perdagangan
+        self.buy_multiplier = BUY_MULTIPLIER
+        self.sell_multiplier = SELL_MULTIPLIER
+
         # Risk management parameters
         self.daily_loss_limit = -0.05  # 5% maximum daily loss
         self.max_drawdown_limit = -0.15  # 15% maximum drawdown
