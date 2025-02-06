@@ -494,7 +494,16 @@ class TradingBot:
                 message += f"{status} <b>{result['condition']}:</b> {result['value']}\n"
             message += f"<b>Confidence Score:</b> {confidence_score}%\n"
             message += f"<b>Conditions Met:</b> {conditions_met}/{len(analysis_results)}\n"
+            # Debug: Print message before sending
+            print("Sending message to Telegram:")
+            print(message)
 
+            # Send the analysis to Telegram
+            response = send_telegram_message(message)
+            if response:
+                print("Message sent successfully:", response)
+            else:
+                print("Failed to send message.")
             # Send the analysis to Telegram
             send_telegram_message(message)
             # Require at least 4 conditions to be met and minimum 60% confidence
