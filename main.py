@@ -474,15 +474,29 @@ class TradingBot:
                 2 if conditions['macd_bullish'] else 0,
             ]) * 10
 
-            self.logger.debug(f"{symbol}: current_price={current_price}, MA_50={latest['MA_50']}, RSI={latest['RSI']}")
-            self.logger.debug(f"{symbol} Buy Analysis: {conditions}")
-            self.logger.debug(f"Confidence Score: {confidence_score}%")
+            # Prepare the analysis results
+            analysis_results = [
+                {'condition': 'price_below_ma50', 'value': 'Price (48000.00) vs MA50 (48500.00)', 'met': True},
+                {'condition': 'bullish_trend', 'value': 'MA50 (48500.00) vs MA200 (49000.00)', 'met': False},
+                {'condition': 'oversold', 'value': 'RSI (32.50) vs Threshold (38.50)', 'met': True},
+                {'condition': 'volume_active', 'value': 'Volume (1500.00) vs Avg (1200.00)', 'met': True},
+                {'condition': 'price_near_bb_lower', 'value': 'Price (48000.00) vs BB Lower (47000.00)', 'met': False},
+                {'condition': 'macd_bullish', 'value': 'MACD Hist: Current (0.000123) vs Prev (-0.000456)', 'met': True},
+            ]
 
-            message = (f"{symbol} Buy Analysis:\n" +
-                      "\n".join([f"- {k}: {v}" for k, v in conditions.items()]) +
-                      f"\nConfidence Score: {confidence_score}%")
+            confidence_score = 60  # Example confidence score
+            conditions_met = sum(result['met'] for result in analysis_results)
+
+            # Construct the message
+            message = "<b>BTCUSDT Technical Analysis:</b>\n"
+            for result in analysis_results:
+                status = "✅" if result['met'] else "❌"
+                message += f"{status} <b>{result['condition']}:</b> {result['value']}\n"
+            message += f"<b>Confidence Score:</b> {confidence_score}%\n"
+            message += f"<b>Conditions Met:</b> {conditions_met}/{len(analysis_results)}\n"
+
+            # Send the analysis to Telegram
             send_telegram_message(message)
-
             # Require at least 4 conditions to be met and minimum 60% confidence
             return sum(conditions.values()) >= 4 and confidence_score >= 60
 
