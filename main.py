@@ -59,7 +59,8 @@ from config.settings import (
     MARKET_VOLATILITY_LIMIT,
     MAX_API_RETRIES,
     ERROR_SLEEP_TIME,
-    MAX_POSITIONS
+    MAX_POSITIONS,
+    MIN_VOLUME_MULTIPLIER
 )
 
 # Jika parameter STOP_LOSS_PERCENTAGE belum ada di config, tetapkan default di sini:
@@ -91,6 +92,7 @@ class TradingBot:
         # Inisialisasi parameter perdagangan
         self.buy_multiplier = BUY_MULTIPLIER
         self.sell_multiplier = SELL_MULTIPLIER
+        self.min_volume_multiplier = MIN_VOLUME_MULTIPLIER
 
         # Risk management parameters
         self.daily_loss_limit = -0.05  # 5% maximum daily loss
