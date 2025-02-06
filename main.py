@@ -625,6 +625,18 @@ class TradingBot:
                             save_transaction(symbol, 'SELL', asset_balance, last_price, asset_balance * last_price)
                             self._update_performance_metrics('SELL', last_buy_price, last_price, asset_balance)
 
+            # Cek harga pasar dan volume
+            current_price = get_last_price(symbol)  # Dapatkan harga pasar saat ini
+            volume = stats['volume']  # Dapatkan volume perdagangan saat ini
+
+            # Periksa apakah harga memenuhi syarat untuk pembelian
+            if current_price < (self.buy_multiplier * last_price):
+                send_telegram_message(f"Harga pasar {current_price} tidak memenuhi syarat untuk pembelian.")
+
+            # Periksa apakah volume memenuhi syarat minimum
+            if volume < (self.min_volume_multiplier * stats['volume']):
+                send_telegram_message(f"Volume perdagangan {volume} tidak memenuhi syarat minimum.")
+
         except Exception as e:
             self.logger.error(f"Error processing trade for {symbol}: {e}")
             self.handle_symbol_error(symbol, e)
