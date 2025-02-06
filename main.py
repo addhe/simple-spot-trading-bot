@@ -637,12 +637,13 @@ class TradingBot:
 
             # Periksa apakah harga memenuhi syarat untuk pembelian
             if current_price < (self.buy_multiplier * last_price):
-                send_telegram_message(f"Harga pasar {current_price} tidak memenuhi syarat untuk pembelian.")
-
-            # Periksa apakah volume memenuhi syarat minimum
-            if volume < (self.min_volume_multiplier * stats['volume']):
-                send_telegram_message(f"Volume perdagangan {volume} tidak memenuhi syarat minimum.")
-
+                send_telegram_message(
+                    f"🔔 Notifikasi Perdagangan\n"
+                    f"🔍 Simbol: {symbol}\n"
+                    f"💵 Harga Pasar: {current_price}\n"
+                    f"📉 Volume Perdagangan: {volume}\n"
+                    f"❌ Status: Tidak memenuhi syarat untuk pembelian."
+                )
         except Exception as e:
             self.logger.error(f"Error processing trade for {symbol}: {e}")
             self.handle_symbol_error(symbol, e)
