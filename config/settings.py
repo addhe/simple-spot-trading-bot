@@ -22,19 +22,19 @@ STOP_LOSS_PERCENTAGE = 0.03         # 3% stop loss for quicker cut loss
 TRAILING_STOP = {                   # Custom trailing stop per pair
     'BTCUSDT': 0.015,              # BTC more stable, 1.5% trailing stop
     'ETHUSDT': 0.02,               # ETH moderate volatility, 2%
-    'SOLUSDT': 0.025               # SOL more volatile, 2.5%
+    'SOLUSDT': 0.03                # SOL more volatile, 3%
 }
 TAKE_PROFIT = {                     # Take profit targets
     'BTCUSDT': 1.02,               # 2% profit for BTC
     'ETHUSDT': 1.025,              # 2.5% profit for ETH
-    'SOLUSDT': 1.03                # 3% profit for SOL
+    'SOLUSDT': 1.05                # 5% profit for SOL
 }
 
 # Entry Strategy Parameters
 BUY_MULTIPLIER = 0.98              # 2% below market for better entry
 SELL_MULTIPLIER = 1.02             # 2% above market for better profit
 TOLERANCE = 0.02                    # Reduced for more precision
-MIN_VOLUME_MULTIPLIER = 1.2         # Minimum volume must be 1.2x average
+MIN_VOLUME_MULTIPLIER = 1.1         # Minimum volume must be 1.1x average
 
 # Time Intervals
 INTERVAL = '15m'                    # 15-minute timeframe to reduce noise
