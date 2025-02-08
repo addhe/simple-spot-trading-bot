@@ -61,7 +61,8 @@ from config.settings import (
     ERROR_SLEEP_TIME,
     MAX_POSITIONS,
     MIN_VOLUME_MULTIPLIER,
-    SELL_THRESHOLD_PERCENTAGE
+    SELL_THRESHOLD_PERCENTAGE,
+    MIN_POSITION_SIZE
 )
 
 # Jika parameter STOP_LOSS_PERCENTAGE belum ada di config, tetapkan default di sini:
@@ -94,6 +95,7 @@ class TradingBot:
         self.buy_multiplier = BUY_MULTIPLIER
         self.sell_multiplier = SELL_MULTIPLIER
         self.min_volume_multiplier = MIN_VOLUME_MULTIPLIER
+        self.min_position_size = MIN_POSITION_SIZE
 
         # Risk management parameters
         self.daily_loss_limit = -0.05  # 5% maximum daily loss
@@ -556,12 +558,14 @@ class TradingBot:
             min_required_volume = MIN_24H_VOLUME.get(symbol, 100000)
             if stats['volume'] < min_required_volume:
                 self.logger.info(f"{symbol}: Insufficient 24h volume (${stats['volume']:.2f} < ${min_required_volume:.2f})")
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Volume tidak mencukupi.")
                 return
 
             # Check market volatility
             volatility_limit = MARKET_VOLATILITY_LIMIT.get(symbol, 0.05) * 100  # Default 5% if not specified
             if abs(stats['price_change']) > volatility_limit:
                 self.logger.info(f"{symbol}: Market too volatile ({abs(stats['price_change']):.1f}% > {volatility_limit:.1f}%)")
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Pasar terlalu volatile.")
                 return
 
             # Get current price with retries
@@ -593,6 +597,7 @@ class TradingBot:
             active_positions = sum(1 for sym in SYMBOLS if float(balances.get(sym.replace('USDT', ''), {}).get('free', 0.0)) > 0)
             if active_positions >= MAX_POSITIONS and asset_balance == 0:
                 self.logger.info(f"Maximum positions ({MAX_POSITIONS}) reached, skipping new trades")
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Posisi maksimum tercapai.")
                 return
 
             # Calculate position size
@@ -647,8 +652,10 @@ class TradingBot:
                 reason += " Volume perdagangan tidak memenuhi syarat minimum (harus >= {self.min_volume_multiplier * stats['volume']})."
 
             # Periksa ukuran posisi
-            if position_size < min_required_position_size:  # Contoh variabel untuk ukuran posisi
+            if position_size < self.min_position_size:
                 reason += " Ukuran posisi terlalu kecil."
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: {reason}")
+                return
 
             # Kirim notifikasi jika ada alasan
             if reason:

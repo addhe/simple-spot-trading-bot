@@ -34,7 +34,7 @@ TAKE_PROFIT = {                     # Take profit targets
 BUY_MULTIPLIER = 0.98              # 2% below market for better entry
 SELL_MULTIPLIER = 1.02             # 2% above market for better profit
 TOLERANCE = 0.02                    # Reduced for more precision
-MIN_VOLUME_MULTIPLIER = 1.1         # Minimum volume must be 1.1x average
+MIN_VOLUME_MULTIPLIER = 1.0         # Minimum volume must be 1.1x average
 
 # Time Intervals
 INTERVAL = '15m'                    # 15-minute timeframe to reduce noise
