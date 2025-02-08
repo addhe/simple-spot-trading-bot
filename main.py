@@ -39,6 +39,7 @@ from src.calculate_position_size import calculate_position_size
 from src.dynamic_multiplier import adjust_buy_multiplier
 from src.risk_management import check_risk_management
 from src.market_monitor import monitor_market_conditions
+from src.get_historical_prices import get_historical_prices
 
 from config.settings import (
     API_KEY,
@@ -593,7 +594,7 @@ class TradingBot:
             self.logger.info(f"{symbol}: Min position size: {self.min_position_size}")
 
             # Adjust buy multiplier based on market conditions
-            historical_prices = [...]  # Fetch historical prices as needed
+            historical_prices = get_historical_prices(symbol)  # Fetch historical prices using the new function
             self.buy_multiplier = adjust_buy_multiplier(last_price, historical_prices)
 
             # Monitor market conditions
