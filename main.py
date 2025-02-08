@@ -116,6 +116,10 @@ class TradingBot:
         # Initialize performance tracking
         self._initialize_performance_tracking()
 
+        # Fetch balances from Binance
+        balances = get_balances()
+        self.available_balance = balances.get('USDT', {}).get('free', 0)  # Adjust based on your balance structure
+
     def _initialize_performance_tracking(self):
         """Initialize performance tracking metrics"""
         try:
