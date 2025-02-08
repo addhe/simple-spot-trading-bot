@@ -652,6 +652,7 @@ class TradingBot:
 
             # Kirim notifikasi jika ada alasan
             if reason:
+                self.logger.info(f"Alasan pembelian tidak dilakukan: {reason}")
                 send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: {reason}")
                 return
 
