@@ -656,8 +656,9 @@ class TradingBot:
             volume = stats['volume']  # Dapatkan volume perdagangan saat ini
 
             # Periksa apakah harga memenuhi syarat untuk pembelian
-            self.logger.info(f"{symbol}: Required price for buying: {self.buy_multiplier * last_price}")
-            if last_price >= (self.buy_multiplier * last_price):
+            required_price = self.buy_multiplier * last_price
+            self.logger.info(f"{symbol}: Required price for buying: {required_price}")
+            if last_price >= required_price:
                 send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Harga pasar tidak memenuhi syarat.")
                 return
             # Periksa volume
