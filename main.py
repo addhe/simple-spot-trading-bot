@@ -581,6 +581,7 @@ class TradingBot:
 
             if not last_price:
                 self.logger.error(f"Failed to get price for {symbol}, skipping trade")
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Gagal mendapatkan harga pasar.")
                 return
 
             self.logger.info(f"{symbol}: Last price retrieved: {last_price}")
@@ -592,6 +593,7 @@ class TradingBot:
             balances = get_balances()
             if not balances:
                 self.logger.error("Could not fetch balances")
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Gagal mendapatkan saldo.")
                 return
 
             asset = symbol.replace('USDT', '')
@@ -615,6 +617,7 @@ class TradingBot:
             self.logger.info(f"{symbol}: Error: {error}")
             if error:
                 self.logger.info(f"{symbol}: {error}")
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: {error}")
                 return
 
             if position_size > 0:
@@ -655,7 +658,7 @@ class TradingBot:
             # Periksa apakah harga memenuhi syarat untuk pembelian
             self.logger.info(f"{symbol}: Required price for buying: {self.buy_multiplier * last_price}")
             if last_price >= (self.buy_multiplier * last_price):
-                self.logger.info(f"{symbol}: Current price does not meet the buy condition.")
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Harga pasar tidak memenuhi syarat.")
                 return
             # Periksa volume
             if volume < (self.min_volume_multiplier * stats['volume']):
@@ -663,8 +666,7 @@ class TradingBot:
 
             # Periksa ukuran posisi
             if position_size < self.min_position_size:
-                reason += " Ukuran posisi terlalu kecil."
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: {reason}")
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Ukuran posisi terlalu kecil.")
                 return
 
             # Kirim notifikasi jika ada alasan
