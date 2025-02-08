@@ -57,6 +57,7 @@ BB_STD = 2
 # Risk Management
 MAX_POSITIONS = 3                   # Maximum concurrent positions
 MIN_USDT_BALANCE = 50              # Minimum USDT to maintain (adjusted from 100)
+MIN_USD_BALANCE = 1.00  # Minimum USD balance required for trading
 MARKET_VOLATILITY_LIMIT = {        # Don't trade if market volatility > limit
     'BTCUSDT': 0.05,               # 5% for BTC (more stable)
     'ETHUSDT': 0.08,               # 8% for ETH (moderate volatility)
