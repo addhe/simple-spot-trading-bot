@@ -32,7 +32,7 @@ TAKE_PROFIT = {                    # Take profit targets
 }
 
 # Entry Strategy Parameters
-BUY_MULTIPLIER = 0.99              # 2% below market for better entry
+BUY_MULTIPLIER = 0.95              # 5% below market for better entry
 SELL_MULTIPLIER = 1.02             # 2% above market for better profit
 TOLERANCE = 0.02                   # Reduced for more precision
 MIN_VOLUME_MULTIPLIER = 1.0        # Minimum volume must be 1.1x average
