@@ -645,6 +645,7 @@ class TradingBot:
                 return
 
             if position_size > 0:
+                logging.info(f"Evaluating buying conditions for {symbol}: Last price {last_price}, Available balance {usdt_balance}.")
                 if not self.should_buy(symbol, last_price):
                     send_telegram_message(f"❌ Conditions not met for buying {symbol}: Current price {last_price} does not meet criteria.")
                     logging.info(f"Conditions not met for buying {symbol}: Current price {last_price} does not meet criteria.")
