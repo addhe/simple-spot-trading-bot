@@ -36,6 +36,9 @@ from src._perform_extended_analysis import _perform_extended_analysis
 from src.logger import setup_logging
 from src.handle_stop_loss import handle_stop_loss
 from src.calculate_position_size import calculate_position_size
+from src.dynamic_multiplier import adjust_buy_multiplier
+from src.risk_management import check_risk_management
+from src.market_monitor import monitor_market_conditions
 
 from config.settings import (
     API_KEY,
@@ -588,6 +591,19 @@ class TradingBot:
             self.logger.info(f"{symbol}: Buy multiplier: {self.buy_multiplier}")
             self.logger.info(f"{symbol}: Min volume multiplier: {self.min_volume_multiplier}")
             self.logger.info(f"{symbol}: Min position size: {self.min_position_size}")
+
+            # Adjust buy multiplier based on market conditions
+            historical_prices = [...]  # Fetch historical prices as needed
+            self.buy_multiplier = adjust_buy_multiplier(last_price, historical_prices)
+
+            # Monitor market conditions
+            required_price = self.buy_multiplier * last_price
+            monitor_market_conditions(last_price, required_price)
+
+            # Check risk management before proceeding with the trade
+            if not check_risk_management(self.available_balance, usdt_per_symbol, self.daily_loss_limit):
+                logging.warning(f"Trade for {symbol} aborted due to risk management rules.")
+                return
 
             # Get balances
             balances = get_balances()
