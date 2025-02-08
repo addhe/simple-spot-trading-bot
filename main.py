@@ -583,6 +583,11 @@ class TradingBot:
                 self.logger.error(f"Failed to get price for {symbol}, skipping trade")
                 return
 
+            self.logger.info(f"{symbol}: Last price retrieved: {last_price}")
+            self.logger.info(f"{symbol}: Buy multiplier: {self.buy_multiplier}")
+            self.logger.info(f"{symbol}: Min volume multiplier: {self.min_volume_multiplier}")
+            self.logger.info(f"{symbol}: Min position size: {self.min_position_size}")
+
             # Get balances
             balances = get_balances()
             if not balances:
@@ -602,6 +607,8 @@ class TradingBot:
 
             # Calculate position size
             position_size, error = calculate_position_size(symbol, usdt_balance, last_price, stats['volume'])
+            self.logger.info(f"{symbol}: Calculated position size: {position_size}")
+            self.logger.info(f"{symbol}: Error: {error}")
             if error:
                 self.logger.info(f"{symbol}: {error}")
                 return
