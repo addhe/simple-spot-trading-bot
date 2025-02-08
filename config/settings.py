@@ -19,7 +19,7 @@ DAILY_LOSS_LIMIT = 0.07             # Stop trading if daily loss reaches 7%
 
 # Position Management
 STOP_LOSS_PERCENTAGE = 0.03         # 3% stop loss for quicker cut loss
-MIN_POSITION_SIZE = 0.01  # Minimum position size for trades
+MIN_POSITION_SIZE = 1.00  # Minimum position size for trades
 TRAILING_STOP = {                   # Custom trailing stop per pair
     'BTCUSDT': 0.015,              # BTC more stable, 1.5% trailing stop
     'ETHUSDT': 0.02,               # ETH moderate volatility, 2%
