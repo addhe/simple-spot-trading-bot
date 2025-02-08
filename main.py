@@ -556,10 +556,12 @@ class TradingBot:
     def process_symbol_trade(self, symbol, usdt_per_symbol):
         """Process trading logic for a single symbol"""
         try:
+            send_telegram_message(f"🔍 Monitoring {symbol} for trading.")
             # Get market stats
             stats = get_24h_stats(symbol)
             if not stats:
                 self.logger.error(f"{symbol}: Could not fetch market stats")
+                send_telegram_message(f"❌ Error processing trade for {symbol}: Could not fetch market stats")
                 return
 
             # Check volume requirements
@@ -592,6 +594,7 @@ class TradingBot:
                 send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Gagal mendapatkan harga pasar.")
                 return
 
+            send_telegram_message(f"📈 Last price retrieved for {symbol}: {last_price}")
             self.logger.info(f"{symbol}: Last price retrieved: {last_price}")
             self.logger.info(f"{symbol}: Buy multiplier: {self.buy_multiplier}")
             self.logger.info(f"{symbol}: Min volume multiplier: {self.min_volume_multiplier}")
@@ -650,6 +653,7 @@ class TradingBot:
                         quantity = math.floor(quantity / step_size) * step_size
 
                     self.logger.info(f"{symbol}: Buying {quantity} units at {last_price}")
+                    send_telegram_message(f"✅ Trade Executed:\nSymbol: {symbol}\nAction: Buy\nPrice: {last_price}\nQuantity: {quantity}")
                     order = self.buy_asset_with_retry(symbol, quantity)
 
                     if order:
@@ -710,6 +714,7 @@ class TradingBot:
 
         except Exception as e:
             self.logger.error(f"Error processing trade for {symbol}: {e}")
+            send_telegram_message(f"❌ Error processing trade for {symbol}: {e}")
             self.handle_symbol_error(symbol, e)
 
     def handle_symbol_error(self, symbol, error):
@@ -766,6 +771,7 @@ class TradingBot:
                         self.process_symbol_trade(symbol, usdt_per_symbol)
                     except Exception as e:
                         self.logger.error(f"Error processing {symbol}: {e}")
+                        send_telegram_message(f"❌ Error processing trade for {symbol}: {e}")
                         self.handle_symbol_error(symbol, e)
                         continue  # Continue with next symbol
 
