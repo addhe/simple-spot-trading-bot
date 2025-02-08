@@ -99,3 +99,6 @@ MIN_TRADE_AMOUNT = {
     'ETHUSDT': 0.001,   # Minimum ETH amount
     'SOLUSDT': 0.1      # Minimum SOL amount
 }
+
+# Persentase kenaikan harga jual
+SELL_THRESHOLD_PERCENTAGE = 0.01  # Persentase kenaikan harga untuk melakukan penjualan (5%)

@@ -60,7 +60,8 @@ from config.settings import (
     MAX_API_RETRIES,
     ERROR_SLEEP_TIME,
     MAX_POSITIONS,
-    MIN_VOLUME_MULTIPLIER
+    MIN_VOLUME_MULTIPLIER,
+    SELL_THRESHOLD_PERCENTAGE
 )
 
 # Jika parameter STOP_LOSS_PERCENTAGE belum ada di config, tetapkan default di sini:
@@ -637,13 +638,31 @@ class TradingBot:
 
             # Periksa apakah harga memenuhi syarat untuk pembelian
             if current_price < (self.buy_multiplier * last_price):
-                send_telegram_message(
-                    f"🔔 Notifikasi Perdagangan\n"
-                    f"🔍 Simbol: {symbol}\n"
-                    f"💵 Harga Pasar: {current_price}\n"
-                    f"📉 Volume Perdagangan: {volume}\n"
-                    f"❌ Status: Tidak memenuhi syarat untuk pembelian."
-                )
+                self.buy_asset(symbol, quantity)  # Melakukan pembelian
+                send_telegram_message(f"✅ Pembelian berhasil untuk {symbol} pada harga {current_price}.")
+            else:
+                reason = "Harga pasar tidak memenuhi syarat (harus < {self.buy_multiplier * last_price})."
+            # Periksa volume
+            if volume < (self.min_volume_multiplier * stats['volume']):
+                reason += " Volume perdagangan tidak memenuhi syarat minimum (harus >= {self.min_volume_multiplier * stats['volume']})."
+
+            # Periksa ukuran posisi
+            if position_size < min_required_position_size:  # Contoh variabel untuk ukuran posisi
+                reason += " Ukuran posisi terlalu kecil."
+
+            # Kirim notifikasi jika ada alasan
+            if reason:
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: {reason}")
+                return
+
+            # Periksa apakah volume memenuhi syarat minimum
+            if volume >= (self.min_volume_multiplier * stats['volume']):
+                if current_price > (last_buy_price * (1 + SELL_THRESHOLD_PERCENTAGE)):
+                    self.sell_asset(symbol, quantity)  # Melakukan penjualan
+                    send_telegram_message(f"✅ Penjualan berhasil untuk {symbol} pada harga {current_price}.")
+            else:
+                send_telegram_message(f"❌ Penjualan tidak dilakukan untuk {symbol}. Alasan: Volume perdagangan tidak memenuhi syarat minimum.")
+
         except Exception as e:
             self.logger.error(f"Error processing trade for {symbol}: {e}")
             self.handle_symbol_error(symbol, e)
