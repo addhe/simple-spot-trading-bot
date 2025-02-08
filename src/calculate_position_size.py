@@ -2,7 +2,8 @@ from config.settings import (
     MAX_INVESTMENT_PER_TRADE,
     MIN_24H_VOLUME,
     MIN_TRADE_AMOUNT,
-    MIN_USDT_BALANCE
+    MIN_USDT_BALANCE,
+    MIN_USD_BALANCE
 )
 
 def calculate_position_size(symbol, available_balance, current_price, volume_24h):
@@ -31,7 +32,7 @@ def calculate_position_size(symbol, available_balance, current_price, volume_24h
             return 0, f"Insufficient 24h volume (${volume_24h:.2f} < ${min_required_volume:.2f})"
 
         # Calculate maximum position size based on portfolio percentage
-        max_position_size = (available_balance - MIN_USDT_BALANCE) * MAX_INVESTMENT_PER_TRADE
+        max_position_size = (available_balance - MIN_USD_BALANCE) * MAX_INVESTMENT_PER_TRADE
 
         # Check if we have enough balance for minimum trade
         min_trade = MIN_TRADE_AMOUNT.get(symbol, 0.001)  # Default to 0.001 BTC worth

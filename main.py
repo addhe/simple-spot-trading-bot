@@ -605,6 +605,10 @@ class TradingBot:
                 send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Posisi maksimum tercapai.")
                 return
 
+            # Log available balances
+            self.logger.info(f"{symbol}: Available asset balance: {asset_balance}")
+            self.logger.info(f"{symbol}: Available USDT balance: {usdt_balance}")
+
             # Calculate position size
             position_size, error = calculate_position_size(symbol, usdt_balance, last_price, stats['volume'])
             self.logger.info(f"{symbol}: Calculated position size: {position_size}")
