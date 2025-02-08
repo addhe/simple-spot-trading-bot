@@ -36,9 +36,9 @@ from src._perform_extended_analysis import _perform_extended_analysis
 from src.logger import setup_logging
 from src.handle_stop_loss import handle_stop_loss
 from src.calculate_position_size import calculate_position_size
-from src.dynamic_multiplier import adjust_buy_multiplier
 from src.risk_management import check_risk_management
 from src.market_monitor import monitor_market_conditions
+from src.dynamic_multiplier import adjust_buy_multiplier
 from src.get_historical_prices import get_historical_prices
 
 from config.settings import (
