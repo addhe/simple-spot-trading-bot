@@ -646,19 +646,23 @@ class TradingBot:
 
             if position_size > 0:
                 if self.should_buy(symbol, last_price):
-                    # Calculate quantity
-                    quantity = position_size / last_price
-                    step_size = get_symbol_step_size(symbol)
-                    if step_size:
-                        quantity = math.floor(quantity / step_size) * step_size
+                    try:
+                        # Execute trade
+                        quantity = position_size / last_price
+                        step_size = get_symbol_step_size(symbol)
+                        if step_size:
+                            quantity = math.floor(quantity / step_size) * step_size
 
-                    self.logger.info(f"{symbol}: Buying {quantity} units at {last_price}")
-                    send_telegram_message(f"✅ Trade Executed:\nSymbol: {symbol}\nAction: Buy\nPrice: {last_price}\nQuantity: {quantity}")
-                    order = self.buy_asset_with_retry(symbol, quantity)
+                        self.logger.info(f"{symbol}: Buying {quantity} units at {last_price}")
+                        send_telegram_message(f"✅ Trade Executed:\nSymbol: {symbol}\nAction: Buy\nPrice: {last_price}\nQuantity: {quantity}")
+                        order = self.buy_asset_with_retry(symbol, quantity)
 
-                    if order:
-                        self.logger.info(f"Buy order successful: {order}")
-                        save_transaction(symbol, 'BUY', quantity, last_price, quantity * last_price)
+                        if order:
+                            self.logger.info(f"Buy order successful: {order}")
+                            save_transaction(symbol, 'BUY', quantity, last_price, quantity * last_price)
+
+                    except Exception as e:
+                        send_telegram_message(f"❌ Error executing trade for {symbol}: {e}")
 
             # Handle selling logic
             elif asset_balance > 0:
