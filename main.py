@@ -657,9 +657,10 @@ class TradingBot:
 
             # Periksa apakah harga memenuhi syarat untuk pembelian
             required_price = self.buy_multiplier * last_price
-            self.logger.info(f"{symbol}: Required price for buying: {required_price}")
+            self.logger.info(f"{symbol}: Current price: {last_price}, Required price for buying: {required_price}")
             if last_price >= required_price:
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Harga pasar tidak memenuhi syarat.")
+                self.logger.error(f"Trade failed for {symbol}: Price condition not met")
+                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Harga pasar ({last_price}) tidak memenuhi syarat (harus < {required_price}).")
                 return
             # Periksa volume
             if volume < (self.min_volume_multiplier * stats['volume']):
@@ -667,6 +668,7 @@ class TradingBot:
 
             # Periksa ukuran posisi
             if position_size < self.min_position_size:
+                self.logger.error(f"Trade failed for {symbol}: Position size too small")
                 send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Ukuran posisi terlalu kecil.")
                 return
 
@@ -682,6 +684,7 @@ class TradingBot:
                     self.sell_asset(symbol, quantity)  # Melakukan penjualan
                     send_telegram_message(f"✅ Penjualan berhasil untuk {symbol} pada harga {current_price}.")
             else:
+                self.logger.error(f"Trade failed for {symbol}: Volume condition not met")
                 send_telegram_message(f"❌ Penjualan tidak dilakukan untuk {symbol}. Alasan: Volume perdagangan tidak memenuhi syarat minimum.")
 
         except Exception as e:
