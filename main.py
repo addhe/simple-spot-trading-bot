@@ -464,67 +464,15 @@ class TradingBot:
             df['MACD_hist'] = df['MACD'] - df['MACD_signal']
 
             latest = df.iloc[-1]
-            prev = df.iloc[-2]
 
-            # Volume analysis
-            avg_volume = df['volume'].tail(10).mean()
-            current_volume = df['volume'].iloc[-1]
-            volume_condition = current_volume > (avg_volume * 1.2)
+            # Log the indicator values for debugging
+            self.logger.info(f"Latest indicators for {symbol} - MA_50: {latest['MA_50']}, MA_200: {latest['MA_200']}, RSI: {latest['RSI']}, BB_lower: {latest['BB_lower']}")
 
-            # Enhanced buy conditions
-            conditions = {
-                'price_below_ma50': current_price < latest['MA_50'],
-                'bullish_trend': latest['MA_50'] > latest['MA_200'],
-                'oversold': latest['RSI'] < RSI_OVERSOLD,
-                'volume_active': volume_condition,
-                'price_near_bb_lower': current_price <= latest['BB_lower'] * 1.02,  # Within 2% of lower BB
-                'macd_bullish': latest['MACD_hist'] > 0 and prev['MACD_hist'] < 0,  # MACD crossover
-            }
+            # Decision logic for buying
+            if latest['close_price'] < latest['BB_lower'] and latest['RSI'] < 30:
+                return True  # Conditions for buying are met
 
-            # Calculate confidence score (0-100)
-            confidence_score = sum([
-                1 if conditions['price_below_ma50'] else 0,
-                2 if conditions['bullish_trend'] else 0,
-                2 if conditions['oversold'] else 0,
-                1 if conditions['volume_active'] else 0,
-                2 if conditions['price_near_bb_lower'] else 0,
-                2 if conditions['macd_bullish'] else 0,
-            ]) * 10
-
-            # Prepare the analysis results
-            analysis_results = [
-                {'condition': 'price_below_ma50', 'value': 'Price (48000.00) vs MA50 (48500.00)', 'met': True},
-                {'condition': 'bullish_trend', 'value': 'MA50 (48500.00) vs MA200 (49000.00)', 'met': False},
-                {'condition': 'oversold', 'value': 'RSI (32.50) vs Threshold (38.50)', 'met': True},
-                {'condition': 'volume_active', 'value': 'Volume (1500.00) vs Avg (1200.00)', 'met': True},
-                {'condition': 'price_near_bb_lower', 'value': 'Price (48000.00) vs BB Lower (47000.00)', 'met': False},
-                {'condition': 'macd_bullish', 'value': 'MACD Hist: Current (0.000123) vs Prev (-0.000456)', 'met': True},
-            ]
-
-            confidence_score = 60  # Example confidence score
-            conditions_met = sum(result['met'] for result in analysis_results)
-
-            # Construct the message
-            message = "<b>BTCUSDT Technical Analysis:</b>\n"
-            for result in analysis_results:
-                status = "✅" if result['met'] else "❌"
-                message += f"{status} <b>{result['condition']}:</b> {result['value']}\n"
-            message += f"<b>Confidence Score:</b> {confidence_score}%\n"
-            message += f"<b>Conditions Met:</b> {conditions_met}/{len(analysis_results)}\n"
-            # Debug: Print message before sending
-            print("Sending message to Telegram:")
-            print(message)
-
-            # Send the analysis to Telegram
-            response = send_telegram_message(message)
-            if response:
-                print("Message sent successfully:", response)
-            else:
-                print("Failed to send message.")
-            # Send the analysis to Telegram
-            send_telegram_message(message)
-            # Require at least 4 conditions to be met and minimum 60% confidence
-            return sum(conditions.values()) >= 4 and confidence_score >= 60
+            return False  # Conditions not met
 
         except Exception as e:
             self.logger.error(f"Buy analysis failed for {symbol}: {e}")
