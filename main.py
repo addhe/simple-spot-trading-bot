@@ -346,6 +346,9 @@ class TradingBot:
                 return True  # Conditions for buying are met
 
             return False  # Conditions not met
+        except Exception as e:
+            self.logger.error(f"Error in should_buy for {symbol}: {e}")
+            return False
 
     def get_highest_price(self, symbol):
         """Mengambil harga tertinggi dari database dalam 24 jam terakhir"""
