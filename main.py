@@ -22,9 +22,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from src.get_balances import get_balances
 from src.get_db_connection import get_db_connection
 from src.get_last_buy_price import get_last_buy_price
-from src.get_last_price import get_last_price
 from src.save_historical_data import save_historical_data
-from src.send_asset_status import send_asset_status, get_24h_stats
+from src.send_asset_status import send_asset_status
 from src.send_telegram_message import send_telegram_message
 from src.status_monitor import status_monitor
 from src.setup_database import setup_database
@@ -37,9 +36,12 @@ from src.logger import setup_logging
 from src.handle_stop_loss import handle_stop_loss
 from src.calculate_position_size import calculate_position_size
 from src.risk_management import check_risk_management
-from src.market_monitor import monitor_market_conditions
 from src.dynamic_multiplier import adjust_buy_multiplier
 from src.get_historical_prices import get_historical_prices
+from src.utils import retry_on_api_error
+from src.performance_tracking import initialize_performance_tracking, update_performance_metrics
+from src.trade_operations import buy_asset, sell_asset
+from src.market_operations import get_24h_stats, get_last_price, process_symbol_trade
 
 from config.settings import (
     API_KEY,
@@ -75,17 +77,6 @@ try:
 except ImportError:
     STOP_LOSS_PERCENTAGE = 0.02  # contoh: 2%
 
-def retry_on_api_error(func):
-    @functools.wraps(func)
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=lambda e: isinstance(e, (BinanceAPIException, requests.exceptions.RequestException))
-    )
-    def wrapper(*args, **kwargs):
-        return func(*args, **kwargs)
-    return wrapper
-
 class TradingBot:
     def __init__(self):
         # Pastikan db_path sudah didefinisikan sebelum dipakai fungsi lain
@@ -106,111 +97,12 @@ class TradingBot:
         self.max_drawdown_limit = -0.15  # 15% maximum drawdown
         self.position_size_limit = 0.1  # Maximum 10% of portfolio per position
 
-        # Performance tracking
-        self.daily_pnl = 0.0
-        self.total_trades = 0
-        self.winning_trades = 0
-        self.initial_portfolio_value = 0.0
-        self.peak_portfolio_value = 0.0
-
         # Initialize performance tracking
-        self._initialize_performance_tracking()
+        initialize_performance_tracking(self)
 
         # Fetch balances from Binance
         balances = get_balances()
         self.available_balance = balances.get('USDT', {}).get('free', 0)  # Adjust based on your balance structure
-
-    def _initialize_performance_tracking(self):
-        """Initialize performance tracking metrics"""
-        try:
-            balances = get_balances()
-            if balances:
-                total_value = float(balances.get('USDT', {}).get('free', 0.0))
-                for symbol in SYMBOLS:
-                    asset = symbol.replace('USDT', '')
-                    if asset in balances:
-                        asset_balance = float(balances[asset]['free'])
-                        price = get_last_price(symbol)
-                        if price:
-                            total_value += asset_balance * price
-
-                self.initial_portfolio_value = total_value
-                self.peak_portfolio_value = total_value
-                self.logger.info(f"Initial portfolio value: {total_value} USDT")
-        except Exception as e:
-            self.logger.error(f"Error initializing performance tracking: {e}")
-
-    def _update_performance_metrics(self, trade_type, entry_price, exit_price, quantity):
-        """Update performance metrics after each trade"""
-        if trade_type == 'SELL':
-            self.total_trades += 1
-            pnl = (exit_price - entry_price) * quantity
-            self.daily_pnl += pnl
-
-            if pnl > 0:
-                self.winning_trades += 1
-
-            win_rate = (self.winning_trades / self.total_trades) * 100 if self.total_trades > 0 else 0
-            self.logger.info(f"Trade Performance:")
-            self.logger.info(f"Win Rate: {win_rate:.2f}%")
-            self.logger.info(f"Daily P&L: {self.daily_pnl:.2f} USDT")
-
-            # Check risk limits
-            current_portfolio_value = self._get_total_portfolio_value()
-            daily_return = (current_portfolio_value - self.initial_portfolio_value) / self.initial_portfolio_value
-            drawdown = (current_portfolio_value - self.peak_portfolio_value) / self.peak_portfolio_value
-
-            if current_portfolio_value > self.peak_portfolio_value:
-                self.peak_portfolio_value = current_portfolio_value
-
-            # Check risk limits
-            if daily_return <= self.daily_loss_limit:
-                self.logger.warning(f"⚠️ Daily loss limit reached: {daily_return:.2%}")
-                send_telegram_message(f"⚠️ Daily loss limit reached: {daily_return:.2%}")
-                return False
-
-            if drawdown <= self.max_drawdown_limit:
-                self.logger.warning(f"⚠️ Maximum drawdown limit reached: {drawdown:.2%}")
-                send_telegram_message(f"⚠️ Maximum drawdown limit reached: {drawdown:.2%}")
-                return False
-
-            return True
-
-    def _get_total_portfolio_value(self):
-        """Calculate total portfolio value"""
-        try:
-            balances = get_balances()
-            if not balances:
-                return 0.0
-
-            total_value = float(balances.get('USDT', {}).get('free', 0.0))
-            for symbol in SYMBOLS:
-                asset = symbol.replace('USDT', '')
-                if asset in balances:
-                    asset_balance = float(balances[asset]['free'])
-                    price = get_last_price(symbol)
-                    if price:
-                        total_value += asset_balance * price
-            return total_value
-        except Exception as e:
-            self.logger.error(f"Error calculating portfolio value: {e}")
-            return 0.0
-
-    def buy_asset(self, symbol, quantity):
-        """Melakukan pembelian aset di Binance"""
-        try:
-            order = self.client.order_market_buy(
-                symbol=symbol,
-                quantity=quantity
-            )
-            self.logger.info(f"✅ Buy order placed: {order}")
-            return order
-        except BinanceAPIException as e:
-            self.logger.error(f"Binance API Exception during buy: {e}")
-        except BinanceOrderException as e:
-            self.logger.error(f"Binance Order Exception during buy: {e}")
-        except Exception as e:
-            self.logger.error(f"Unexpected error during buy: {e}")
 
     @retry_on_api_error
     def buy_asset_with_retry(self, symbol, quantity):
@@ -241,10 +133,7 @@ class TradingBot:
                 self.logger.error(f"Insufficient USDT balance. Required: {order_value}, Available: {usdt_balance}")
                 return None
 
-            order = self.client.order_market_buy(
-                symbol=symbol,
-                quantity=quantity
-            )
+            order = buy_asset(symbol, quantity)
 
             # Log successful transaction
             self.logger.info(f"✅ Buy order successful for {symbol}:")
@@ -274,22 +163,6 @@ class TradingBot:
             return True
         except requests.RequestException:
             return False
-
-    def sell_asset(self, symbol, quantity):
-        """Melakukan penjualan aset di Binance"""
-        try:
-            order = self.client.order_market_sell(
-                symbol=symbol,
-                quantity=quantity
-            )
-            self.logger.info(f"✅ Sell order placed: {order}")
-            return order
-        except BinanceAPIException as e:
-            self.logger.error(f"Binance API Exception during sell: {e}")
-        except BinanceOrderException as e:
-            self.logger.error(f"Binance Order Exception during sell: {e}")
-        except Exception as e:
-            self.logger.error(f"Unexpected error during sell: {e}")
 
     def get_min_notional(self, symbol):
         """Ambil batas minimal notional trading dari Binance"""
@@ -474,10 +347,6 @@ class TradingBot:
 
             return False  # Conditions not met
 
-        except Exception as e:
-            self.logger.error(f"Buy analysis failed for {symbol}: {e}")
-            return False
-
     def get_highest_price(self, symbol):
         """Mengambil harga tertinggi dari database dalam 24 jam terakhir"""
         try:
@@ -500,187 +369,6 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error getting highest price for {symbol}: {e}")
             return None
-
-    def process_symbol_trade(self, symbol, usdt_per_symbol):
-        """Process trading logic for a single symbol"""
-        try:
-            send_telegram_message(f"🔍 Monitoring {symbol} for trading.")
-            # Get market stats
-            stats = get_24h_stats(symbol)
-            if not stats:
-                self.logger.error(f"{symbol}: Could not fetch market stats")
-                send_telegram_message(f"❌ Error processing trade for {symbol}: Could not fetch market stats")
-                return
-
-            # Check volume requirements
-            min_required_volume = MIN_24H_VOLUME.get(symbol, 100000)
-            if stats['volume'] < min_required_volume:
-                self.logger.info(f"{symbol}: Insufficient 24h volume (${stats['volume']:.2f} < ${min_required_volume:.2f})")
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Volume tidak mencukupi.")
-                return
-
-            # Check market volatility
-            volatility_limit = MARKET_VOLATILITY_LIMIT.get(symbol, 0.05) * 100  # Default 5% if not specified
-            if abs(stats['price_change']) > volatility_limit:
-                self.logger.info(f"{symbol}: Market too volatile ({abs(stats['price_change']):.1f}% > {volatility_limit:.1f}%)")
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Pasar terlalu volatile.")
-                return
-
-            # Get current price with retries
-            retries = MAX_API_RETRIES
-            last_price = None
-            while retries > 0:
-                last_price = get_last_price(symbol)
-                if last_price:
-                    break
-                self.logger.warning(f"Could not get price for {symbol}, retrying ({retries})")
-                time.sleep(ERROR_SLEEP_TIME)
-                retries -= 1
-
-            if not last_price:
-                self.logger.error(f"Failed to get price for {symbol}, skipping trade")
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Gagal mendapatkan harga pasar.")
-                return
-
-            send_telegram_message(f"📈 Last price retrieved for {symbol}: {last_price}")
-            self.logger.info(f"{symbol}: Last price retrieved: {last_price}")
-            self.logger.info(f"{symbol}: Buy multiplier: {self.buy_multiplier}")
-            self.logger.info(f"{symbol}: Min volume multiplier: {self.min_volume_multiplier}")
-            self.logger.info(f"{symbol}: Min position size: {self.min_position_size}")
-
-            # Adjust buy multiplier based on market conditions
-            historical_prices = get_historical_prices(symbol)  # Fetch historical prices using the new function
-            self.buy_multiplier = adjust_buy_multiplier(last_price, historical_prices)
-
-            # Monitor market conditions
-            required_price = self.buy_multiplier * last_price
-            monitor_market_conditions(last_price, required_price)
-
-            # Check risk management before proceeding with the trade
-            if not check_risk_management(self.available_balance, usdt_per_symbol, self.daily_loss_limit):
-                logging.warning(f"Trade for {symbol} aborted due to risk management rules.")
-                return
-
-            # Get balances
-            balances = get_balances()
-            if not balances:
-                self.logger.error("Could not fetch balances")
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Gagal mendapatkan saldo.")
-                return
-
-            asset = symbol.replace('USDT', '')
-            asset_balance = float(balances.get(asset, {}).get('free', 0.0))
-            usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
-
-            # Check if we have too many positions
-            active_positions = sum(1 for sym in SYMBOLS if float(balances.get(sym.replace('USDT', ''), {}).get('free', 0.0)) > 0)
-            if active_positions >= MAX_POSITIONS and asset_balance == 0:
-                self.logger.info(f"Maximum positions ({MAX_POSITIONS}) reached, skipping new trades")
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Posisi maksimum tercapai.")
-                return
-
-            # Log available balances
-            self.logger.info(f"{symbol}: Available asset balance: {asset_balance}")
-            self.logger.info(f"{symbol}: Available USDT balance: {usdt_balance}")
-
-            # Calculate position size
-            position_size, error = calculate_position_size(symbol, usdt_balance, last_price, stats['volume'])
-            self.logger.info(f"{symbol}: Calculated position size: {position_size}")
-            self.logger.info(f"{symbol}: Error: {error}")
-            if error:
-                self.logger.info(f"{symbol}: {error}")
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: {error}")
-                return
-
-            if position_size > 0:
-                self.logger.info(f"Evaluating buying conditions for {symbol}: Last price {last_price}, Available balance {usdt_balance}.")
-                if not self.should_buy(symbol, last_price):
-                    send_telegram_message(f"❌ Conditions not met for buying {symbol}: Current price {last_price} does not meet criteria.")
-                    logging.info(f"Conditions not met for buying {symbol}: Current price {last_price} does not meet criteria.")
-                    return
-
-                # Log the available balance
-                self.logger.info(f"Available USDT balance: {usdt_balance}")
-
-                if usdt_balance < position_size:
-                    send_telegram_message(f"❌ Insufficient balance to buy {symbol}: Available balance {usdt_balance}, required {position_size}.")
-                    logging.info(f"Insufficient balance to buy {symbol}: Available balance {usdt_balance}, required {position_size}.")
-                    return
-
-                try:
-                    # Execute trade
-                    quantity = position_size / last_price
-                    step_size = get_symbol_step_size(symbol)
-                    if step_size:
-                        quantity = math.floor(quantity / step_size) * step_size
-
-                    self.logger.info(f"{symbol}: Buying {quantity} units at {last_price}")
-                    send_telegram_message(f"✅ Trade Executed:\nSymbol: {symbol}\nAction: Buy\nPrice: {last_price}\nQuantity: {quantity}")
-                    order = self.buy_asset_with_retry(symbol, quantity)
-
-                    if order:
-                        self.logger.info(f"Buy order successful: {order}")
-                        save_transaction(symbol, 'BUY', quantity, last_price, quantity * last_price)
-
-                except Exception as e:
-                    send_telegram_message(f"❌ Error executing trade for {symbol}: {e}")
-
-            # Handle selling logic
-            elif asset_balance > 0:
-                last_buy_price = get_last_buy_price(symbol)
-                if last_buy_price:
-                    should_sell, reason = handle_stop_loss(symbol, last_buy_price, last_price, stats['high'])
-
-                    if should_sell:
-                        self.logger.info(f"{symbol}: Selling due to {reason}")
-                        order = self.sell_asset(symbol, asset_balance)
-
-                        if order:
-                            profit = (last_price - last_buy_price) * asset_balance
-                            self.logger.info(f"Sell order successful: {order}")
-                            save_transaction(symbol, 'SELL', asset_balance, last_price, asset_balance * last_price)
-                            self._update_performance_metrics('SELL', last_buy_price, last_price, asset_balance)
-
-            # Cek harga pasar dan volume
-            current_price = get_last_price(symbol)  # Dapatkan harga pasar saat ini
-            volume = stats['volume']  # Dapatkan volume perdagangan saat ini
-
-            # Periksa apakah harga memenuhi syarat untuk pembelian
-            required_price = self.buy_multiplier * last_price
-            self.logger.info(f"{symbol}: Current price: {last_price}, Required price for buying: {required_price}")
-            if last_price >= required_price:
-                self.logger.error(f"Trade failed for {symbol}: Price condition not met")
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Harga pasar ({last_price}) tidak memenuhi syarat (harus < {required_price}).")
-                return
-            # Periksa volume
-            if volume < (self.min_volume_multiplier * stats['volume']):
-                reason = " Volume perdagangan tidak memenuhi syarat minimum (harus >= {self.min_volume_multiplier * stats['volume']})."
-
-            # Periksa ukuran posisi
-            if position_size < self.min_position_size:
-                self.logger.error(f"Trade failed for {symbol}: Position size too small")
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: Ukuran posisi terlalu kecil.")
-                return
-
-            # Kirim notifikasi jika ada alasan
-            if reason:
-                self.logger.info(f"Alasan pembelian tidak dilakukan: {reason}")
-                send_telegram_message(f"❌ Pembelian tidak dilakukan untuk {symbol}. Alasan: {reason}")
-                return
-
-            # Periksa apakah volume memenuhi syarat minimum
-            if volume >= (self.min_volume_multiplier * stats['volume']):
-                if current_price > (last_buy_price * (1 + SELL_THRESHOLD_PERCENTAGE)):
-                    self.sell_asset(symbol, quantity)  # Melakukan penjualan
-                    send_telegram_message(f"✅ Penjualan berhasil untuk {symbol} pada harga {current_price}.")
-            else:
-                self.logger.error(f"Trade failed for {symbol}: Volume condition not met")
-                send_telegram_message(f"❌ Penjualan tidak dilakukan untuk {symbol}. Alasan: Volume perdagangan tidak memenuhi syarat minimum.")
-
-        except Exception as e:
-            self.logger.error(f"Error processing trade for {symbol}: {e}")
-            send_telegram_message(f"❌ Error processing trade for {symbol}: {e}")
-            self.handle_symbol_error(symbol, e)
 
     def handle_symbol_error(self, symbol, error):
         """Handle errors for specific symbols"""
@@ -733,7 +421,7 @@ class TradingBot:
 
                 for symbol in active_symbols:
                     try:
-                        self.process_symbol_trade(symbol, usdt_per_symbol)
+                        process_symbol_trade(self, symbol, usdt_per_symbol)
                     except Exception as e:
                         self.logger.error(f"Error processing {symbol}: {e}")
                         send_telegram_message(f"❌ Error processing trade for {symbol}: {e}")
@@ -897,7 +585,7 @@ def main():
 
             for symbol in SYMBOLS:
                 bot.logger.info(f"Simulasi trade untuk {symbol} dengan alokasi {usdt_per_symbol} USDT")
-                bot.process_symbol_trade(symbol, usdt_per_symbol)
+                process_symbol_trade(bot, symbol, usdt_per_symbol)
             # Setelah simulasi selesai, hentikan bot
             bot.app_status['running'] = False
         else:
