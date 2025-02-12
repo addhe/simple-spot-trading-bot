@@ -188,6 +188,30 @@ class TradingBot:
             self.logger.error(f"Error fetching historical data for {symbol}: {e}")
             return []
 
+    # Add this function to the TradingBot class
+    def get_market_stats(self, symbol):
+        """Get 24-hour market statistics with proper error handling and retries"""
+        try:
+            # Get ticker using the client directly instead of relying on external function
+            ticker = self.client.get_ticker(symbol=symbol)
+
+            if not ticker:
+                self.logger.error(f"Empty ticker data received for {symbol}")
+                return None
+
+            return {
+                'symbol': symbol,
+                'price': float(ticker['lastPrice']),
+                'volume': float(ticker['volume']),
+                'price_change_percent': float(ticker['priceChangePercent'])
+            }
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API error getting market stats for {symbol}: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error getting market stats for {symbol}: {e}")
+            return None
+
     def initialize_state(self):
         """Initialize bot state and configuration"""
         self.db_lock = threading.Lock()
