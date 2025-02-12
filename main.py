@@ -448,7 +448,7 @@ class TradingBot:
 
                 for symbol in active_symbols:
                     try:
-                        process_symbol_trade(symbol, usdt_per_symbol, self.available_balance)
+                        self.process_symbol_trade(symbol, usdt_per_symbol, self.available_balance)
                     except Exception as e:
                         self.logger.error(f"Error processing {symbol}: {e}")
                         send_telegram_message(f"❌ Error processing trade for {symbol}: {e}")
@@ -583,6 +583,13 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
+    def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
+        # Implementasi proses trading untuk setiap simbol
+        # Contoh implementasi, silakan disesuaikan dengan kebutuhan
+        self.logger.info(f"Processing trade for {symbol} with allocation {usdt_per_symbol} USDT")
+        # Lakukan analisis teknikal dan keputusan trading di sini
+        # ...
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Trading Bot Runner")
@@ -612,7 +619,7 @@ def main():
 
             for symbol in SYMBOLS:
                 bot.logger.info(f"Simulasi trade untuk {symbol} dengan alokasi {usdt_per_symbol} USDT")
-                process_symbol_trade(symbol, usdt_per_symbol, bot.available_balance)
+                bot.process_symbol_trade(symbol, usdt_per_symbol, bot.available_balance)
             # Setelah simulasi selesai, hentikan bot
             bot.app_status['running'] = False
         else:
