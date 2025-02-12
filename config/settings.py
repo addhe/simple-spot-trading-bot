@@ -19,16 +19,16 @@ DAILY_LOSS_LIMIT = 0.07             # Stop trading if daily loss reaches 7%
 
 # Position Management
 STOP_LOSS_PERCENTAGE = 0.03         # 3% stop loss for quicker cut loss
-MIN_POSITION_SIZE = 1.00  # Minimum position size for trades
+MIN_POSITION_SIZE = 0.0001          # Minimum position size for trades
 TRAILING_STOP = {                   # Custom trailing stop per pair
-    'BTCUSDT': 0.015,              # BTC more stable, 1.5% trailing stop
-    'ETHUSDT': 0.02,               # ETH moderate volatility, 2%
-    'SOLUSDT': 0.03                # SOL more volatile, 3%
+    'BTCUSDT': 0.015,               # BTC more stable, 1.5% trailing stop
+    'ETHUSDT': 0.02,                # ETH moderate volatility, 2%
+    'SOLUSDT': 0.03                 # SOL more volatile, 3%
 }
-TAKE_PROFIT = {                    # Take profit targets
-    'BTCUSDT': 1.02,               # 2% profit for BTC
-    'ETHUSDT': 1.025,              # 2.5% profit for ETH
-    'SOLUSDT': 1.05                # 5% profit for SOL
+TAKE_PROFIT = {                     # Take profit targets
+    'BTCUSDT': 1.02,                # 2% profit for BTC
+    'ETHUSDT': 1.025,               # 2.5% profit for ETH
+    'SOLUSDT': 1.05                 # 5% profit for SOL
 }
 
 # Entry Strategy Parameters
@@ -56,16 +56,16 @@ BB_STD = 2
 
 # Risk Management
 MAX_POSITIONS = 3                   # Maximum concurrent positions
-MIN_USDT_BALANCE = 50              # Minimum USDT to maintain (adjusted from 100)
-MIN_USD_BALANCE = 1.00  # Minimum USD balance required for trading
-MARKET_VOLATILITY_LIMIT = {        # Don't trade if market volatility > limit
-    'BTCUSDT': 0.05,               # 5% for BTC (more stable)
-    'ETHUSDT': 0.08,               # 8% for ETH (moderate volatility)
-    'SOLUSDT': 0.10                # 10% for SOL (higher volatility)
+MIN_USDT_BALANCE = 50               # Minimum USDT to maintain (adjusted from 100)
+MIN_USD_BALANCE = 1.00              # Minimum USD balance required for trading
+MARKET_VOLATILITY_LIMIT = {         # Don't trade if market volatility > limit
+    'BTCUSDT': 0.05,                # 5% for BTC (more stable)
+    'ETHUSDT': 0.08,                # 8% for ETH (moderate volatility)
+    'SOLUSDT': 0.10                 # 10% for SOL (higher volatility)
 }
 
 # Rate Limiting
-RATE_LIMIT_PER_MINUTE = 1200       # Binance limit
+RATE_LIMIT_PER_MINUTE = 1200        # Binance limit
 RATE_LIMIT_BUFFER = 0.8            # Use only 80% of rate limit
 
 # Error Handling
@@ -103,4 +103,4 @@ MIN_TRADE_AMOUNT = {
 }
 
 # Persentase kenaikan harga jual
-SELL_THRESHOLD_PERCENTAGE = 0.01  # Persentase kenaikan harga untuk melakukan penjualan (5%)
+SELL_THRESHOLD_PERCENTAGE = 0.02  # Persentase kenaikan harga untuk melakukan penjualan (5%)
