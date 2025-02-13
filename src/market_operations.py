@@ -2,6 +2,7 @@ import logging
 from src.get_balances import get_balances
 from src.save_transaction import save_transaction
 from src.send_telegram_message import send_telegram_message
+from datetime import datetime
 
 
 def get_24h_stats(symbol):
@@ -49,8 +50,9 @@ def process_symbol_trade(self, symbol, available_usdt):
                 # Execute buy order
                 order = self.buy_asset_with_retry(symbol, quantity)
                 if order:
+                    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     self.logger.info(f"Successfully bought {quantity} {symbol} at {current_price}")
-                    send_telegram_message(f"🟢 Bought {quantity} {symbol} at {current_price} USDT")
+                    send_telegram_message(f"📊 *Trading Bot Status Report*\n⏰ *Timestamp*: {current_time}\n\n💰 *Portfolio Summary*: Bought {quantity} {symbol} at {current_price} USDT")
 
         # Check if we should sell any existing positions
         balances = get_balances()
@@ -66,8 +68,9 @@ def process_symbol_trade(self, symbol, available_usdt):
                     try:
                         sell_order = sell_asset(symbol, asset_balance)
                         if sell_order:
+                            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             self.logger.info(f"Successfully sold {asset_balance} {symbol} at {current_price}")
-                            send_telegram_message(f"🔴 Sold {asset_balance} {symbol} at {current_price} USDT")
+                            send_telegram_message(f"📊 *Trading Bot Status Report*\n⏰ *Timestamp*: {current_time}\n\n💰 *Portfolio Summary*: Sold {asset_balance} {symbol} at {current_price} USDT")
                     except Exception as e:
                         self.logger.error(f"Error selling {symbol}: {e}")
 

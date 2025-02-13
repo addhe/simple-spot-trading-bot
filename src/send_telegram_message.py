@@ -31,6 +31,7 @@ def send_telegram_message(message: str,
     """
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        # Update the message formatting to use Markdown or HTML
         payload = {
             'chat_id': chat_id,
             'text': message,
