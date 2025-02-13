@@ -37,9 +37,9 @@ def process_symbol_trade(self, symbol, available_usdt):
 
         # Check if we should buy based on technical analysis
         if self.should_buy(symbol, current_price):
-            # Calculate position size based on available USDT
+            # Calculate position size based on available USDT and BUY_MULTIPLIER
             quantity = calculate_position_size(
-                available_usdt,
+                available_usdt * BUY_MULTIPLIER,
                 current_price,
                 self.position_size_limit,
                 MIN_POSITION_SIZE
@@ -60,9 +60,9 @@ def process_symbol_trade(self, symbol, available_usdt):
             # Get the last buy price from database
             last_buy_price = get_last_buy_price(symbol)
             if last_buy_price:
-                # Check if price has increased enough to sell
+                # Check if price has increased enough to sell based on SELL_MULTIPLIER
                 price_change = (current_price - last_buy_price) / last_buy_price
-                if price_change >= SELL_THRESHOLD_PERCENTAGE:
+                if price_change >= SELL_THRESHOLD_PERCENTAGE * SELL_MULTIPLIER:
                     try:
                         sell_order = sell_asset(symbol, asset_balance)
                         if sell_order:
