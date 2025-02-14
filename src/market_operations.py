@@ -53,6 +53,9 @@ def process_symbol_trade(self, symbol, available_usdt):
                     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     self.logger.info(f"Successfully bought {quantity} {symbol} at {current_price}")
                     send_telegram_message(f"📊 *Trading Bot Status Report*\n⏰ *Timestamp*: {current_time}\n\n💰 *Portfolio Summary*: Bought {quantity} {symbol} at {current_price} USDT")
+                else:
+                    self.logger.error(f"Failed to buy {symbol} at {current_price}")
+                    send_telegram_message(f"❌ Failed to buy {symbol} at {current_price}. Reason: {order}")
 
         # Check if we should sell any existing positions
         balances = get_balances()
@@ -71,8 +74,12 @@ def process_symbol_trade(self, symbol, available_usdt):
                             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             self.logger.info(f"Successfully sold {asset_balance} {symbol} at {current_price}")
                             send_telegram_message(f"📊 *Trading Bot Status Report*\n⏰ *Timestamp*: {current_time}\n\n💰 *Portfolio Summary*: Sold {asset_balance} {symbol} at {current_price} USDT")
+                        else:
+                            self.logger.error(f"Failed to sell {symbol} at {current_price}")
+                            send_telegram_message(f"❌ Failed to sell {symbol} at {current_price}. Reason: {sell_order}")
                     except Exception as e:
                         self.logger.error(f"Error selling {symbol}: {e}")
+                        send_telegram_message(f"❌ Failed to sell {symbol} at {current_price}. Reason: {e}")
 
     except Exception as e:
         self.logger.error(f"Error processing {symbol}: {e}")
