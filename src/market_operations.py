@@ -20,7 +20,7 @@ def get_last_price(symbol):
     # Implementation here
     pass
 
-def process_symbol_trade(self, symbol, available_usdt):
+def process_symbol_trade(self, symbol):
     """Process trading logic for a symbol with error handling."""
     try:
         market_stats = self.get_market_stats(symbol)
@@ -35,6 +35,9 @@ def process_symbol_trade(self, symbol, available_usdt):
                 f"24h volume too low for {symbol}: {volume_24h}"
             )
             return
+
+        # Update the logic to fetch the correct available USDT from the Binance API
+        available_usdt = self.get_available_usdt()  # Fetch available USDT
 
         if self.should_buy(symbol, current_price):
             quantity = self.calculate_position_size(
@@ -83,3 +86,13 @@ def process_symbol_trade(self, symbol, available_usdt):
     except Exception as e:
         self.logger.error(f"Error processing {symbol}: {e}")
         self.handle_symbol_error(symbol, e)
+
+
+def get_available_usdt(self):
+    """Fetch the available USDT from the Binance account."""
+    try:
+        balances = self.client.get_asset_balance(asset='USDT')
+        return float(balances['free'])
+    except Exception as e:
+        self.logger.error(f"Error fetching USDT balance: {e}")
+        return 0.0
