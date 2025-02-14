@@ -93,8 +93,9 @@ def get_available_usdt(self):
     """Fetch the available USDT from the Binance account."""
     try:
         balances = self.client.get_asset_balance(asset='USDT')
-        self.logger.info(f"USDT Balance Response: {balances}")  # Log the full response
-        return float(balances['free'])
+        available_balance = float(balances['free'])
+        self.logger.info(f"Fetched USDT Balance: {available_balance}")  # Log fetched balance
+        return available_balance
     except Exception as e:
         self.logger.error(f"Error fetching USDT balance: {e}")
         return 0.0
