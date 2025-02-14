@@ -36,9 +36,10 @@ def process_symbol_trade(self, symbol):
             )
             return
 
-        # Update the logic to fetch the correct available USDT from the Binance API
+        # Log before fetching available USDT
+        self.logger.info("Fetching available USDT...")
         available_usdt = self.get_available_usdt()  # Fetch available USDT
-        self.logger.info(f"Available USDT: {available_usdt}")  # Debugging line
+        self.logger.info(f"Available USDT: {available_usdt}")  # Log the available USDT
 
         if self.should_buy(symbol, current_price):
             quantity = self.calculate_position_size(
