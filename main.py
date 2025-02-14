@@ -588,7 +588,31 @@ class TradingBot:
         # Contoh implementasi, silakan disesuaikan dengan kebutuhan
         self.logger.info(f"Processing trade for {symbol} with allocation {usdt_per_symbol} USDT")
         # Lakukan analisis teknikal dan keputusan trading di sini
+        current_market_price = self.get_current_market_price(symbol)
+        last_buy_price = get_last_buy_price(symbol)
+        if not self.should_buy(symbol, current_market_price):
+            reason = "Market conditions not favorable for buying."
+            self.send_telegram_message(
+                f"📊 Trading Bot Status Report\n"
+                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"💰 Portfolio Summary:\n"
+                f"Total Value: ${available_balance}\n"
+                f"USDT Available: ${usdt_per_symbol}\n"
+                f"USDT Locked: ${0}\n\n"
+                f"🔐 Asset Positions:\n"
+                f"Current Price: {current_market_price}\n"
+                f"Price in DB: {last_buy_price}\n"
+                f"Reason: {reason}"
+            )
         # ...
+
+    def get_current_market_price(self, symbol):
+        try:
+            ticker = self.client.get_ticker(symbol=symbol)
+            return float(ticker['lastPrice'])
+        except Exception as e:
+            self.logger.error(f"Error getting current market price for {symbol}: {e}")
+            return None
 
 def main():
     """Main entry point"""
