@@ -592,7 +592,7 @@ class TradingBot:
         last_buy_price = get_last_buy_price(symbol)
         if not self.should_buy(symbol, current_market_price):
             reason = "Market conditions not favorable for buying."
-            self.send_telegram_message(
+            send_telegram_message(
                 f"📊 Trading Bot Status Report\n"
                 f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                 f"💰 Portfolio Summary:\n"
@@ -604,7 +604,6 @@ class TradingBot:
                 f"Price in DB: {last_buy_price}\n"
                 f"Reason: {reason}"
             )
-        # ...
 
     def get_current_market_price(self, symbol):
         try:
