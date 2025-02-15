@@ -1,4 +1,5 @@
 import os
+import sys
 from binance.client import Client
 from src.logger import logger
 
@@ -23,5 +24,13 @@ if __name__ == '__main__':
     api_secret = os.getenv('API_SECRET')
     client = Client(api_key, api_secret)
 
+    # Get command line arguments
+    if len(sys.argv) != 3:
+        print("Usage: python order_and_convert.py <source> <amount>")
+        sys.exit(1)
+
+    source = sys.argv[1]
+    amount = float(sys.argv[2])
+
     # Example usage
-    convert_asset_to_usdt(client, 'BTC', 0.01)  # Convert 0.01 BTC to USDT
+    convert_asset_to_usdt(client, source, amount)  # Convert specified amount to USDT
