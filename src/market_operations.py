@@ -101,3 +101,14 @@ def get_available_usdt(self):
     except Exception as e:
         self.logger.error(f"Error fetching USDT balance: {e}")
         return 0.0
+
+
+def should_buy(self, symbol, current_price):
+    """Determine if the bot should buy the asset."""
+    moving_average = self.get_moving_average(symbol)
+    if current_price < moving_average:
+        return True
+    else:
+        self.logger.info(f"Conditions not favorable for buying {symbol}: "
+                         f"Current price {current_price} is above the moving average.")
+        return False

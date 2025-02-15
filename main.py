@@ -591,7 +591,7 @@ class TradingBot:
         current_market_price = self.get_current_market_price(symbol)
         last_buy_price = get_last_buy_price(symbol)
         if not self.should_buy(symbol, current_market_price):
-            reason = "Market conditions not favorable for buying."
+            reason = "Current price is above the moving average."
             asset_prices = {symbol: self.get_current_market_price(symbol) for symbol in SYMBOLS}
             send_telegram_message(
                 f"📊 Trading Bot Status Report\n"
