@@ -1,46 +1,14 @@
 #!/usr/bin/env python
 import os
-import sys
 import time
-import math
-import threading
 import sqlite3
-import argparse
-import logging
-from datetime import datetime, timedelta
-from logging.handlers import RotatingFileHandler
+import threading
+import math
 import numpy as np
 import pandas as pd
-import functools
-import requests
-
+from datetime import datetime, timedelta
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
-from tenacity import retry, stop_after_attempt, wait_exponential
-
-# Import local modules
-from src.get_balances import get_balances
-from src.get_db_connection import get_db_connection
-from src.get_last_buy_price import get_last_buy_price
-from src.save_historical_data import save_historical_data
-from src.send_asset_status import send_asset_status
-from src.send_telegram_message import send_telegram_message
-from src.status_monitor import status_monitor
-from src.setup_database import setup_database
-from src.save_transaction import save_transaction
-from src.get_symbol_step_size import get_symbol_step_size
-from src._validate_kline_data import _validate_kline_data
-from src._calculate_rsi import _calculate_rsi
-from src._perform_extended_analysis import _perform_extended_analysis
-from src.logger import setup_logging
-from src.handle_stop_loss import handle_stop_loss
-from src.calculate_position_size import calculate_position_size
-from src.risk_management import check_risk_management
-from src.dynamic_multiplier import adjust_buy_multiplier
-from src.utils import retry_on_api_error
-from src.performance_tracking import initialize_performance_tracking, update_performance_metrics
-from src.trade_operations import buy_asset, sell_asset
-from src.market_operations import get_24h_stats, get_last_price, process_symbol_trade
 
 from config.settings import (
     API_KEY,
@@ -53,33 +21,19 @@ from config.settings import (
     CACHE_LIFETIME,
     BUY_MULTIPLIER,
     SELL_MULTIPLIER,
-    TOLERANCE,
-    STATUS_INTERVAL,
-    RSI_OVERSOLD,
-    RSI_OVERBOUGHT,
-    RSI_PERIOD,
-    TRAILING_STOP,
-    MAX_INVESTMENT_PER_TRADE,
+    MIN_VOLUME_MULTIPLIER,
+    MIN_POSITION_SIZE,
     MIN_24H_VOLUME,
     MARKET_VOLATILITY_LIMIT,
-    MAX_API_RETRIES,
-    ERROR_SLEEP_TIME,
-    MAX_POSITIONS,
-    MIN_VOLUME_MULTIPLIER,
-    SELL_THRESHOLD_PERCENTAGE,
-    MIN_POSITION_SIZE,
-    MIN_TRADE_AMOUNT,
+    TRAILING_STOP,
     TAKE_PROFIT
 )
 
-# Jika parameter STOP_LOSS_PERCENTAGE belum ada di config, tetapkan default di sini:
-try:
-    from config.settings import STOP_LOSS_PERCENTAGE
-except ImportError:
-    STOP_LOSS_PERCENTAGE = 0.02  # contoh: 2%
-
-# Setup logging at the start of the main file
-logger = setup_logging()
+from src.logger import logger
+from src.get_balances import get_balances
+from src.database_manager import DatabaseManager
+from src.trade_manager import TradeManager
+from src.send_telegram_message import send_telegram_message
 
 class TradingBot:
     def __init__(self):
@@ -88,11 +42,14 @@ class TradingBot:
         self.logger = logger
         self.logger.info("Initializing trading bot...")
 
-        # Initialize database path
-        self.db_path = 'table_transactions.db'
+        # Initialize database manager
+        self.db_manager = DatabaseManager('table_transactions.db')
 
         # Initialize Binance client
         self.initialize_client()
+
+        # Initialize trade manager
+        self.trade_manager = TradeManager(self.db_manager, self.client)
 
         # Get initial balances
         balances = get_balances()
@@ -108,7 +65,7 @@ class TradingBot:
         self.take_profits = TAKE_PROFIT
 
         # Initialize database and calculate initial value
-        self.setup_database()
+        self.db_manager.setup_tables()
         initial_value = self.calculate_total_value(balances)
         self.logger.info(f"Initial portfolio value: {initial_value} USDT")
         self.logger.info(f"Initialized trading pairs: {self.trading_pairs}")
@@ -116,129 +73,6 @@ class TradingBot:
         # Initialize thread status and error tracking
         self.thread_status = {
             'main_thread': True,
-            'status_thread': True,
-            'cleanup_thread': True
-        }
-        self.error_counts = {symbol: 0 for symbol in self.trading_pairs}
-        self.MAX_ERRORS = 3
-
-        # Initialize performance tracking
-        initialize_performance_tracking(self)
-
-    @retry_on_api_error
-    def buy_asset_with_retry(self, symbol, quantity):
-        """Melakukan pembelian aset di Binance dengan retry mechanism"""
-        try:
-            # Validate minimum order size
-            min_notional = self.get_min_notional(symbol)
-            current_price = get_last_price(symbol)
-
-            if not current_price:
-                raise ValueError(f"Could not get current price for {symbol}")
-
-            order_value = quantity * current_price
-
-            if min_notional and order_value < min_notional:
-                self.logger.error(f"Order value {order_value} is below minimum notional {min_notional} for {symbol}")
-                return None
-
-            # Check internet connection
-            if not self._check_internet_connection():
-                raise ConnectionError("No internet connection available")
-
-            # Check if we have enough balance
-            balances = get_balances()
-            usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
-
-            if usdt_balance < order_value:
-                self.logger.error(f"Insufficient USDT balance. Required: {order_value}, Available: {usdt_balance}")
-                return None
-
-            order = buy_asset(symbol, quantity)
-
-            # Log successful transaction
-            self.logger.info(f"✅ Buy order successful for {symbol}:")
-            self.logger.info(f"   Quantity: {quantity}")
-            self.logger.info(f"   Price: {current_price}")
-            self.logger.info(f"   Total Value: {order_value} USDT")
-
-            # Save transaction details
-            save_transaction(symbol, 'BUY', quantity, current_price, order_value)
-
-            return order
-
-        except BinanceAPIException as e:
-            self.logger.error(f"Binance API Exception during buy: {e}")
-            raise
-        except BinanceOrderException as e:
-            self.logger.error(f"Binance Order Exception during buy: {e}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Unexpected error during buy: {e}")
-            raise
-
-    def _check_internet_connection(self):
-        """Check if internet connection is available"""
-        try:
-            requests.get("https://api.binance.com", timeout=5)
-            return True
-        except requests.RequestException:
-            return False
-
-    def get_min_notional(self, symbol):
-        """Ambil batas minimal notional trading dari Binance"""
-        try:
-            exchange_info = self.client.get_exchange_info()
-            for s in exchange_info['symbols']:
-                if s['symbol'] == symbol:
-                    for f in s['filters']:
-                        if f['filterType'] == 'MIN_NOTIONAL':
-                            return float(f['minNotional'])
-            return None
-        except Exception as e:
-            self.logger.error(f"Error getting min notional for {symbol}: {e}")
-            return None
-
-    def get_historical_klines(self, symbol, interval, start_time):
-        try:
-            klines = self.client.get_historical_klines(symbol, interval, start_str=start_time)
-            if not klines:
-                self.logger.error(f"Empty klines data received for {symbol}. Full response: {klines}")
-            return klines
-        except Exception as e:
-            self.logger.error(f"Error fetching historical data for {symbol}: {e}")
-            return []
-
-    # Add this function to the TradingBot class
-    def get_market_stats(self, symbol):
-        """Get 24-hour market statistics with proper error handling and retries"""
-        try:
-            # Get ticker using the client directly instead of relying on external function
-            ticker = self.client.get_ticker(symbol=symbol)
-
-            if not ticker:
-                self.logger.error(f"Empty ticker data received for {symbol}")
-                return None
-
-            return {
-                'symbol': symbol,
-                'price': float(ticker['lastPrice']),
-                'volume': float(ticker['volume']),
-                'price_change_percent': float(ticker['priceChangePercent'])
-            }
-        except BinanceAPIException as e:
-            self.logger.error(f"Binance API error getting market stats for {symbol}: {e}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Unexpected error getting market stats for {symbol}: {e}")
-            return None
-
-    def initialize_state(self):
-        """Initialize bot state and configuration"""
-        self.db_lock = threading.Lock()
-        self.app_status = {
-            'running': True,
-            'trade_thread': True,
             'status_thread': True,
             'cleanup_thread': True
         }
@@ -260,132 +94,153 @@ class TradingBot:
             self.logger.error(f"Failed to initialize Binance client: {e}")
             raise
 
-    def setup_database(self):
-        """Initialize database and historical data"""
+    def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
+        """Process trades for configured trading pairs"""
         try:
-            conn = self.get_db_connection()
-            cursor = conn.cursor()
+            # Get current market data
+            current_price = self.get_current_market_price(symbol)
+            if not current_price:
+                self.logger.error(f"Could not get current price for {symbol}")
+                return
 
-            # Create transactions table if not exists
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS transactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    quantity REAL NOT NULL,
-                    price REAL NOT NULL,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+            # Check if we have any position
+            balances = get_balances()
+            has_position, position_size = self.check_symbol_balance(symbol, balances)
 
-            # Create symbol stats table for tracking highest prices
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS symbol_stats (
-                    symbol TEXT PRIMARY KEY,
-                    highest_price REAL NOT NULL,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+            # Process existing position
+            if has_position:
+                action, quantity = self.trade_manager.process_trade(symbol, current_price, position_size)
+                if action == 'SELL':
+                    self.trade_manager.execute_sell(symbol, quantity)
+                    return
 
-            conn.commit()
-
-            # Initialize historical data
-            for symbol in self.trading_pairs:
-                self.update_historical_data(symbol)
+            # Check if we should buy
+            if self.should_buy(symbol, current_price):
+                quantity = self.calculate_position_size(symbol, current_price, usdt_per_symbol)
+                if quantity > 0:
+                    self.trade_manager.execute_buy(symbol, quantity)
 
         except Exception as e:
-            self.logger.error(f"Error setting up database: {e}")
-            raise
+            self.logger.error(f"Error processing {symbol}: {e}")
+            self.error_counts[symbol] += 1
 
-    def update_historical_data(self, symbol, interval='1h'):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+    def cleanup(self):
+        """Cleanup resources"""
+        try:
+            # Cancel any pending orders
+            for symbol in SYMBOL_CONFIG:
+                try:
+                    self.client.cancel_open_orders(symbol=symbol)
+                except Exception:
+                    pass  # Ignore errors during cleanup
 
-        # Buat tabel jika belum ada
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS historical_data (
-                symbol TEXT,
-                timestamp TEXT PRIMARY KEY,
-                open_price REAL,
-                high_price REAL,
-                low_price REAL,
-                close_price REAL,
-                volume REAL
-            )
-        ''')
+            # Close database connection
+            self.db_manager.close_connection()
 
-        # Ambil timestamp terakhir dari database
-        cursor.execute("SELECT MAX(timestamp) FROM historical_data WHERE symbol = ?", (symbol,))
-        last_record = cursor.fetchone()
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
 
-        if last_record and last_record[0]:
-            last_timestamp = datetime.strptime(last_record[0], '%Y-%m-%d %H:%M:%S')
-            start_time = int(last_timestamp.timestamp() * 1000)
+    def get_current_market_price(self, symbol):
+        """
+        Improved market price retrieval with proper error handling
+        """
+        normalized_symbol = self.get_normalized_symbol(symbol)
+        try:
+            ticker = self.client.get_ticker(symbol=normalized_symbol)
+            return float(ticker['lastPrice'])
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API error getting price for {normalized_symbol}: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error getting price for {normalized_symbol}: {e}")
+            return None
+
+    def get_normalized_symbol(self, symbol):
+        """
+        Ensures consistent symbol format for Binance API calls
+        """
+        if not symbol.endswith('USDT'):
+            return f"{symbol}USDT"
+        return symbol
+
+    def check_symbol_balance(self, symbol, balances):
+        """
+        Check if we have any balance for a given symbol
+        Returns tuple of (has_balance, balance_amount)
+        """
+        base_symbol, _ = self.get_symbol_info(symbol)
+        if not base_symbol:
+            return False, 0
+
+        if base_symbol in balances:
+            balance = float(balances[base_symbol].get('free', 0))
+            if balance > 0:
+                return True, balance
+            self.logger.debug(f"Zero balance for {base_symbol}")
         else:
-            start_time = int((datetime.now() - timedelta(days=7)).timestamp() * 1000)
+            self.logger.debug(f"No balance entry for {base_symbol}")
 
-        current_time = int(datetime.now().timestamp() * 1000)
-        if start_time >= current_time:
-            start_time = current_time - (7 * 24 * 60 * 60 * 1000)  # Default ke 7 hari lalu jika ada masalah
+        return False, 0
 
-        # Ambil data dari Binance
-        klines = self.get_historical_klines(symbol, interval, start_time)
+    def get_symbol_info(self, symbol):
+        """
+        Get detailed information about a trading symbol
+        Returns base symbol and quote symbol
+        """
+        if symbol not in self.trading_pairs:
+            self.logger.error(f"Symbol {symbol} not in configured trading pairs")
+            return None, None
 
-        if not klines:
-            self.logger.error(f"Skipping update for {symbol} due to empty klines response.")
-            conn.close()
-            return False
+        config = SYMBOL_CONFIG.get(symbol)
+        if not config:
+            self.logger.error(f"No configuration found for symbol {symbol}")
+            return None, None
 
-        try:
-            for kline in klines:
-                if len(kline) < 6:
-                    self.logger.warning(f"Incomplete kline data for {symbol}: {kline}")
-                    continue
+        return config['base_asset'], config['quote_asset']
 
-                timestamp = datetime.fromtimestamp(kline[0] / 1000)
-                cursor.execute('''
-                    INSERT OR REPLACE INTO historical_data
-                    (symbol, timestamp, open_price, high_price, low_price, close_price, volume)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    symbol,
-                    timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-                    float(kline[1]),
-                    float(kline[2]),
-                    float(kline[3]),
-                    float(kline[4]),
-                    float(kline[5])
-                ))
+    def calculate_total_value(self, balances):
+        """
+        Calculate total portfolio value based on configured trading pairs
+        """
+        total_value = 0.0
 
-            conn.commit()
-            self.logger.info(f"Successfully updated historical data for {symbol}.")
-            return True
-        except Exception as e:
-            self.logger.error(f"Error processing klines for {symbol}: {e}")
-            return False
-        finally:
-            conn.close()
+        # Add USDT balance
+        usdt_balance = float(balances.get('USDT', {}).get('free', 0))
+        total_value += usdt_balance
 
-    def _calculate_bollinger_bands(self, prices, window=20, num_std=2):
-        """Calculate Bollinger Bands"""
-        rolling_mean = prices.rolling(window=window).mean()
-        rolling_std = prices.rolling(window=window).std()
-        upper_band = rolling_mean + (rolling_std * num_std)
-        lower_band = rolling_mean - (rolling_std * num_std)
-        return upper_band, rolling_mean, lower_band
+        # Track processed base symbols to avoid duplicates
+        processed_symbols = set()
 
-    def _calculate_macd(self, prices, fast=12, slow=26, signal=9):
-        """Calculate MACD"""
-        exp1 = prices.ewm(span=fast, adjust=False).mean()
-        exp2 = prices.ewm(span=slow, adjust=False).mean()
-        macd = exp1 - exp2
-        signal_line = macd.ewm(span=signal, adjust=False).mean()
-        return macd, signal_line
+        for symbol in SYMBOL_CONFIG:
+            base_symbol, _ = self.get_symbol_info(symbol)
+            if not base_symbol:
+                continue
+
+            # Skip if we've already processed this base symbol
+            if base_symbol in processed_symbols:
+                continue
+
+            processed_symbols.add(base_symbol)
+
+            if base_symbol in balances:
+                asset_balance = float(balances[base_symbol].get('free', 0))
+                if asset_balance > 0:
+                    current_price = self.get_current_market_price(symbol)
+                    if current_price:
+                        asset_value = asset_balance * current_price
+                        total_value += asset_value
+                        self.logger.info(f"Added {base_symbol} value: {asset_value} USDT")
+                else:
+                    self.logger.debug(f"Zero balance for {base_symbol}")
+            else:
+                self.logger.debug(f"No balance entry for {base_symbol}")
+
+        return total_value
 
     def should_buy(self, symbol, current_price):
         """Determine whether to buy based on technical analysis"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db_manager.get_connection()
             query = f'''
                 SELECT timestamp, close_price, volume
                 FROM historical_data
@@ -426,60 +281,36 @@ class TradingBot:
             self.logger.error(f"Error in should_buy for {symbol}: {e}")
             return False
 
-    def get_highest_price(self, symbol):
+    def _calculate_bollinger_bands(self, prices, window=20, num_std=2):
+        """Calculate Bollinger Bands"""
+        rolling_mean = prices.rolling(window=window).mean()
+        rolling_std = prices.rolling(window=window).std()
+        upper_band = rolling_mean + (rolling_std * num_std)
+        lower_band = rolling_mean - (rolling_std * num_std)
+        return upper_band, rolling_mean, lower_band
+
+    def _calculate_macd(self, prices, fast=12, slow=26, signal=9):
+        """Calculate MACD"""
+        exp1 = prices.ewm(span=fast, adjust=False).mean()
+        exp2 = prices.ewm(span=slow, adjust=False).mean()
+        macd = exp1 - exp2
+        signal_line = macd.ewm(span=signal, adjust=False).mean()
+        return macd, signal_line
+
+    def calculate_position_size(self, symbol, current_price, usdt_per_symbol):
         """
-        Get the highest price recorded for a symbol since last buy
+        Calculate position size based on available balance and symbol configuration
         """
-        try:
-            cursor = self.get_db_connection().cursor()
-            cursor.execute("""
-                SELECT highest_price FROM symbol_stats
-                WHERE symbol = ? ORDER BY timestamp DESC LIMIT 1
-            """, (symbol,))
-            result = cursor.fetchone()
-            return float(result[0]) if result else 0
-        except Exception as e:
-            self.logger.error(f"Error getting highest price for {symbol}: {e}")
+        # Calculate potential quantity based on available USDT
+        potential_quantity = usdt_per_symbol / current_price
+
+        # Validate minimum position size
+        min_position_size = self.min_position_sizes.get(symbol, MIN_POSITION_SIZE)
+        if potential_quantity < min_position_size:
+            self.logger.warning(f"Trade amount {potential_quantity} below minimum position size {min_position_size} for {symbol}")
             return 0
 
-    def update_highest_price(self, symbol, price):
-        """
-        Update the highest price for a symbol
-        """
-        try:
-            conn = self.get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO symbol_stats (symbol, highest_price, timestamp)
-                VALUES (?, ?, datetime('now'))
-            """, (symbol, price))
-            conn.commit()
-        except Exception as e:
-            self.logger.error(f"Error updating highest price for {symbol}: {e}")
-
-    def get_last_buy_price(self, symbol):
-        """
-        Get the last buy price for a symbol
-        """
-        try:
-            cursor = self.get_db_connection().cursor()
-            cursor.execute("""
-                SELECT price FROM transactions
-                WHERE symbol = ? AND type = 'BUY'
-                ORDER BY timestamp DESC LIMIT 1
-            """, (symbol,))
-            result = cursor.fetchone()
-            return float(result[0]) if result else None
-        except Exception as e:
-            self.logger.error(f"Error getting last buy price for {symbol}: {e}")
-            return None
-
-    def handle_symbol_error(self, symbol, error):
-        """Handle errors for specific symbols"""
-        self.error_counts[symbol] += 1
-        if self.error_counts[symbol] >= self.MAX_ERRORS:
-            self.logger.error(f"Disabling trading for {symbol} due to excessive errors")
-            send_telegram_message(f"⚠️ Trading disabled for {symbol} due to excessive errors")
+        return potential_quantity
 
     def trade(self):
         """Main trading loop"""
@@ -487,11 +318,11 @@ class TradingBot:
         max_errors = 3
         error_sleep = 60  # Sleep 1 minute after error
 
-        while self.app_status['running']:
+        while self.thread_status['main_thread']:
             try:
-                if not self.app_status['trade_thread']:
+                if not self.thread_status['trade_thread']:
                     self.logger.info("Restarting trade thread...")
-                    self.app_status['trade_thread'] = True
+                    self.thread_status['trade_thread'] = True
                     error_count = 0
 
                 # Check internet connection first
@@ -536,7 +367,7 @@ class TradingBot:
                 error_count += 1
                 if error_count >= max_errors:
                     self.logger.error("Trade thread: Too many consecutive errors")
-                    self.app_status['trade_thread'] = False
+                    self.thread_status['trade_thread'] = False
                 time.sleep(error_sleep)
                 continue
 
@@ -545,7 +376,7 @@ class TradingBot:
     def cleanup_old_data(self):
         """Clean up historical data older than 24 hours"""
         try:
-            conn = get_db_connection()
+            conn = self.db_manager.get_connection()
             cursor = conn.cursor()
             cursor.execute('''
                 DELETE FROM historical_data
@@ -564,11 +395,11 @@ class TradingBot:
         error_sleep = 60  # Sleep 1 minute after error
         cleanup_interval = 3600  # Run cleanup every hour
 
-        while self.app_status['running']:
+        while self.thread_status['cleanup_thread']:
             try:
-                if not self.app_status['cleanup_thread']:
+                if not self.thread_status['cleanup_thread']:
                     self.logger.info("Restarting cleanup monitor thread...")
-                    self.app_status['cleanup_thread'] = True
+                    self.thread_status['cleanup_thread'] = True
                     error_count = 0
 
                 # Attempt database cleanup
@@ -585,7 +416,7 @@ class TradingBot:
 
                 if error_count >= max_errors:
                     self.logger.error("Cleanup monitor: Too many consecutive errors")
-                    self.app_status['cleanup_thread'] = False
+                    self.thread_status['cleanup_thread'] = False
                     time.sleep(error_sleep)
                     continue
 
@@ -594,7 +425,7 @@ class TradingBot:
                 error_count += 1
                 if error_count >= max_errors:
                     self.logger.error("Cleanup monitor: Too many consecutive errors")
-                    self.app_status['cleanup_thread'] = False
+                    self.thread_status['cleanup_thread'] = False
                 time.sleep(error_sleep)
                 continue
 
@@ -602,8 +433,8 @@ class TradingBot:
 
     def check_app_status(self):
         """Monitor application status"""
-        while self.app_status['running']:
-            if not all(self.app_status.values()):
+        while self.thread_status['status_thread']:
+            if not all(self.thread_status.values()):
                 self.logger.error("One or more threads are inactive!")
                 send_telegram_message("⚠️ Warning: System degraded - check application status")
             time.sleep(600)
@@ -624,7 +455,7 @@ class TradingBot:
             # Jika mode simulasi (hanya untuk satu siklus) kita hentikan setelah satu iterasi.
             if getattr(self, 'simulate', False):
                 self.logger.info("MODE SIMULASI AKTIF: Selesai satu siklus trading.")
-                self.app_status['running'] = False
+                self.thread_status['main_thread'] = False
 
             # Wait for threads
             while any(thread.is_alive() for thread in threads):
@@ -632,7 +463,7 @@ class TradingBot:
 
         except KeyboardInterrupt:
             self.logger.info("Shutting down gracefully...")
-            self.app_status['running'] = False
+            self.thread_status['main_thread'] = False
 
             # Wait for threads to finish
             for thread in threads:
@@ -640,384 +471,25 @@ class TradingBot:
 
         except Exception as e:
             self.logger.critical(f"Fatal error: {e}")
-            self.app_status['running'] = False
+            self.thread_status['main_thread'] = False
 
         finally:
             self.cleanup()
 
-    def cleanup(self):
-        """Cleanup resources"""
+    def _check_internet_connection(self):
+        """Check if internet connection is available"""
         try:
-            # Cancel any pending orders
-            for symbol in SYMBOL_CONFIG:
-                try:
-                    self.client.cancel_open_orders(symbol=symbol)
-                except Exception:
-                    pass
-
-            self.logger.info("Cleanup completed")
-        except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}")
-
-    def get_symbol_info(self, symbol):
-        """
-        Get detailed information about a trading symbol
-        Returns base symbol and quote symbol
-        """
-        if symbol not in self.trading_pairs:
-            self.logger.error(f"Symbol {symbol} not in configured trading pairs")
-            return None, None
-
-        config = SYMBOL_CONFIG.get(symbol)
-        if not config:
-            self.logger.error(f"No configuration found for symbol {symbol}")
-            return None, None
-
-        return config['base_asset'], config['quote_asset']
-
-    def check_symbol_balance(self, symbol, balances):
-        """
-        Check if we have any balance for a given symbol
-        Returns tuple of (has_balance, balance_amount)
-        """
-        base_symbol, _ = self.get_symbol_info(symbol)
-        if not base_symbol:
-            return False, 0
-
-        if base_symbol in balances:
-            balance = float(balances[base_symbol].get('free', 0))
-            if balance > 0:
-                return True, balance
-            self.logger.debug(f"Zero balance for {base_symbol}")
-        else:
-            self.logger.debug(f"No balance entry for {base_symbol}")
-
-        return False, 0
-
-    def calculate_total_value(self, balances):
-        """
-        Calculate total portfolio value based on configured trading pairs
-        """
-        total_value = 0.0
-
-        # Add USDT balance
-        usdt_balance = float(balances.get('USDT', {}).get('free', 0))
-        total_value += usdt_balance
-
-        # Track processed base symbols to avoid duplicates
-        processed_symbols = set()
-
-        for symbol in SYMBOL_CONFIG:
-            base_symbol, _ = self.get_symbol_info(symbol)
-            if not base_symbol:
-                continue
-
-            # Skip if we've already processed this base symbol
-            if base_symbol in processed_symbols:
-                continue
-
-            processed_symbols.add(base_symbol)
-
-            if base_symbol in balances:
-                asset_balance = float(balances[base_symbol].get('free', 0))
-                if asset_balance > 0:
-                    current_price = self.get_current_market_price(symbol)
-                    if current_price:
-                        asset_value = asset_balance * current_price
-                        total_value += asset_value
-                        self.logger.info(f"Added {base_symbol} value: {asset_value} USDT")
-                else:
-                    self.logger.debug(f"Zero balance for {base_symbol}")
-            else:
-                self.logger.debug(f"No balance entry for {base_symbol}")
-
-        return total_value
-
-    def is_valid_symbol(self, symbol):
-        """
-        Improved symbol validation that handles both raw and USDT-suffixed symbols
-        """
-        return symbol in self.trading_pairs
-
-    def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
-        """
-        Process trades only for configured trading pairs
-        """
-        if not self.is_valid_symbol(symbol):
-            self.logger.error(f"Symbol {symbol} not in configured trading pairs")
-            return
-
-        balances = get_balances()
-        has_balance, balance_amount = self.check_symbol_balance(symbol, balances)
-
-        if not has_balance:
-            self.logger.debug(f"No existing balance for {symbol}, proceeding with trade evaluation")
-
-        # Retry mechanism for getting current price
-        current_price = None
-        for attempt in range(3):  # Retry up to 3 times
-            current_price = self.get_current_market_price(symbol)
-            if current_price:
-                break
-            self.logger.warning(f"Attempt {attempt + 1}: Could not get current price for {symbol}, retrying...")
-            time.sleep(1)  # Wait before retrying
-
-        if not current_price:
-            self.logger.error(f"Failed to retrieve current price for {symbol} after 3 attempts.")
-            return
-
-        # Calculate potential quantity based on available USDT
-        potential_quantity = usdt_per_symbol / current_price
-
-        # Validate trade conditions
-        if not self.validate_trade_conditions(symbol, potential_quantity, current_price):
-            return
-
-        # Continue with trading logic based on configuration parameters
-        if self.should_buy(symbol, current_price):
-            try:
-                # Get configured take profit and stop loss values
-                take_profit_multiplier = self.take_profits.get(symbol, 1.02)  # Default 2% profit
-                stop_loss_multiplier = 1 - STOP_LOSS_PERCENTAGE
-
-                stop_loss = current_price * stop_loss_multiplier
-                take_profit = current_price * take_profit_multiplier
-
-                order = self.buy_asset_with_retry(symbol, potential_quantity)
-                if order:
-                    self.logger.info(f"Buy order executed for {symbol} at {current_price}")
-                    self.update_position_tracking(symbol, 'BUY', potential_quantity, current_price)
-            except Exception as e:
-                self.logger.error(f"Error executing buy order for {symbol}: {e}")
-                self.handle_symbol_error(symbol, e)
-
-    def get_current_market_price(self, symbol):
-        """
-        Improved market price retrieval with proper error handling
-        """
-        normalized_symbol = self.get_normalized_symbol(symbol)
-        try:
-            ticker = self.client.get_ticker(symbol=normalized_symbol)
-            return float(ticker['lastPrice'])
-        except BinanceAPIException as e:
-            self.logger.error(f"Binance API error getting price for {normalized_symbol}: {e}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Unexpected error getting price for {normalized_symbol}: {e}")
-            return None
-
-    def get_normalized_symbol(self, symbol):
-        """
-        Ensures consistent symbol format for Binance API calls
-        """
-        if not symbol.endswith('USDT'):
-            return f"{symbol}USDT"
-        return symbol
-
-    def get_24h_volume(self, symbol):
-        """
-        Fetch the 24-hour trading volume for a given symbol.
-        """
-        try:
-            ticker = self.client.get_ticker(symbol=symbol)
-            return float(ticker['volume'])
-        except BinanceAPIException as e:
-            self.logger.error(f"Binance API error getting 24h volume for {symbol}: {e}")
-            return 0
-        except Exception as e:
-            self.logger.error(f"Unexpected error getting 24h volume for {symbol}: {e}")
-            return 0
-
-    def calculate_volatility(self, symbol, period=14):
-        """
-        Calculate the market volatility for a given symbol over a specified period.
-        """
-        historical_prices = self.get_historical_prices(symbol, period)
-        if not historical_prices:
-            self.logger.error(f"No historical prices available for {symbol}")
-            return float('inf')  # Return high volatility if no data is available
-
-        returns = np.log(np.array(historical_prices[1:]) / np.array(historical_prices[:-1]))
-        volatility = np.std(returns) * np.sqrt(period)  # Annualized volatility
-        return volatility
-
-    def get_historical_prices(self, symbol, period):
-        """
-        Fetch historical prices for a given symbol over a specified period.
-        """
-        try:
-            klines = self.client.get_historical_klines(symbol, Client.KLINE_INTERVAL_1DAY, f"{period} day ago UTC")
-            return [float(kline[4]) for kline in klines]  # Closing prices
-        except BinanceAPIException as e:
-            self.logger.error(f"Binance API error getting historical prices for {symbol}: {e}")
-            return []
-        except Exception as e:
-            self.logger.error(f"Unexpected error getting historical prices for {symbol}: {e}")
-            return []
-
-    def validate_trade_conditions(self, symbol, quantity, current_price):
-        """
-        Validate trading conditions based on configuration
-        """
-        # Check minimum trade amount
-        if quantity < self.min_trade_amounts.get(symbol, 0):
-            self.logger.warning(f"Trade amount {quantity} below minimum {self.min_trade_amounts[symbol]} for {symbol}")
-            return False
-
-        # Check 24h volume
-        volume_24h = self.get_24h_volume(symbol)
-        if volume_24h < self.min_volumes.get(symbol, 0):
-            self.logger.warning(f"24h volume {volume_24h} below minimum {self.min_volumes[symbol]} for {symbol}")
-            return False
-
-        # Check market volatility
-        volatility = self.calculate_volatility(symbol)
-        volatility_limit = self.market_volatility_limits.get(symbol, float('inf'))
-        if volatility > volatility_limit:
-            self.logger.warning(f"Market volatility {volatility:.4f} above limit {volatility_limit:.4f} for {symbol}")
-            return False
-
-        return True
-
-    def send_status_update(self):
-        """Send status update via Telegram"""
-        try:
-            balances = get_balances()
-            if not balances:
-                self.logger.error("Failed to fetch balances")
-                return
-
-            total_value = self.calculate_total_value(balances)
-
-            # Format timestamp
-            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-            # Create message header
-            message = f"📊 Trading Bot Status Report\n"
-            message += f"⏰ {timestamp} UTC\n\n"
-
-            # Add portfolio summary
-            message += "💰 Portfolio Summary:\n"
-            message += f"Total Value: ${total_value:.2f}\n"
-            usdt_balance = balances.get('USDT', {}).get('free', 0)
-            message += f"USDT Available: ${usdt_balance:.2f}\n"
-            message += f"USDT Locked: ${balances.get('USDT', {}).get('locked', 0):.2f}\n\n"
-
-            # Add asset positions
-            message += "🔐 Asset Positions:\n"
-
-            for symbol in self.trading_pairs:
-                base_asset, _ = self.get_symbol_info(symbol)
-                if base_asset in balances:
-                    free_balance = balances[base_asset]['free']
-                    locked_balance = balances[base_asset]['locked']
-                    if free_balance > 0 or locked_balance > 0:
-                        # Get current price
-                        current_price = self.get_current_market_price(symbol)
-                        if current_price:
-                            value_usdt = (free_balance + locked_balance) * current_price
-                            message += f"{base_asset}: {free_balance:.8f}"
-                            if locked_balance > 0:
-                                message += f" (🔒 {locked_balance:.8f})"
-                            message += f" [${value_usdt:.2f}]\n"
-                            message += f"Current Price: ${current_price:.2f}\n"
-
-            # Add market conditions
-            message += "\n📈 Market Conditions:\n"
-            for symbol in self.trading_pairs:
-                try:
-                    volume_24h = float(self.client.get_ticker(symbol=symbol)['volume'])
-                    price_change = float(self.client.get_ticker(symbol=symbol)['priceChangePercent'])
-                    message += f"{symbol}:\n"
-                    message += f"24h Volume: ${volume_24h:.2f}\n"
-                    message += f"24h Change: {price_change:+.2f}%\n"
-                except Exception as e:
-                    self.logger.error(f"Error getting market data for {symbol}: {e}")
-
-            send_telegram_message(message)
-
-        except Exception as e:
-            self.logger.error(f"Error sending status update: {e}")
-
-    def check_take_profit(self, symbol, current_price, buy_price):
-        """
-        Check if we should take profit based on current price and buy price
-        """
-        if not buy_price:
-            return False
-
-        profit_percentage = (current_price - buy_price) / buy_price
-        take_profit_target = self.take_profits.get(symbol, 0.02)  # Default 2%
-
-        if profit_percentage >= take_profit_target:
-            self.logger.info(f"Take profit triggered for {symbol}. Profit: {profit_percentage:.2%}")
+            requests.get("https://api.binance.com", timeout=5)
             return True
-
-        return False
-
-    def check_trailing_stop(self, symbol, current_price, highest_price):
-        """
-        Check if trailing stop loss is triggered
-        """
-        if not highest_price:
+        except requests.RequestException:
             return False
 
-        price_drop = (highest_price - current_price) / highest_price
-        trailing_stop = self.trailing_stops.get(symbol, 0.01)  # Default 1%
-
-        if price_drop >= trailing_stop:
-            self.logger.info(f"Trailing stop triggered for {symbol}. Drop: {price_drop:.2%}")
-            return True
-
-        return False
-
-    def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
-        """Process trades for configured trading pairs"""
-        try:
-            # Get current market data
-            current_price = self.get_current_market_price(symbol)
-            if not current_price:
-                self.logger.error(f"Could not get current price for {symbol}")
-                return
-
-            # Get last buy price from database
-            last_buy = self.get_last_buy_price(symbol)
-
-            # Check if we have any position
-            balances = get_balances()
-            has_position, position_size = self.check_symbol_balance(symbol, balances)
-
-            if has_position:
-                # Update highest price if needed
-                highest_price = self.get_highest_price(symbol)
-                if current_price > highest_price:
-                    self.update_highest_price(symbol, current_price)
-
-                # Check take profit and trailing stop
-                should_take_profit = self.check_take_profit(symbol, current_price, last_buy)
-                should_trail_stop = self.check_trailing_stop(symbol, current_price, highest_price)
-
-                if should_take_profit or should_trail_stop:
-                    success = self.sell_asset(symbol, position_size)
-                    if success:
-                        self.logger.info(f"Successfully sold {position_size} {symbol} at {current_price}")
-                        # Reset highest price after successful sell
-                        self.update_highest_price(symbol, 0)
-                    return
-
-            # Check if we should buy
-            if self.should_buy(symbol, current_price):
-                quantity = self.calculate_position_size(symbol, current_price, usdt_per_symbol)
-                if quantity > 0:
-                    success = self.buy_asset(symbol, quantity)
-                    if success:
-                        self.logger.info(f"Successfully bought {quantity} {symbol} at {current_price}")
-                        # Initialize highest price after buy
-                        self.update_highest_price(symbol, current_price)
-
-        except Exception as e:
-            self.logger.error(f"Error processing {symbol}: {e}")
-            self.error_counts[symbol] += 1
+    def handle_symbol_error(self, symbol, error):
+        """Handle errors for specific symbols"""
+        self.error_counts[symbol] += 1
+        if self.error_counts[symbol] >= self.MAX_ERRORS:
+            self.logger.error(f"Disabling trading for {symbol} due to excessive errors")
+            send_telegram_message(f"⚠️ Trading disabled for {symbol} due to excessive errors")
 
 def status_monitor(bot):
     """Monitor and report bot status"""
@@ -1060,7 +532,7 @@ def main():
                 bot.logger.info(f"Simulasi trade untuk {symbol} dengan alokasi {usdt_per_symbol} USDT")
                 bot.process_symbol_trade(symbol, usdt_per_symbol, bot.available_balance)
             # Setelah simulasi selesai, hentikan bot
-            bot.app_status['running'] = False
+            bot.thread_status['main_thread'] = False
         else:
             bot.run()
     except Exception as e:
