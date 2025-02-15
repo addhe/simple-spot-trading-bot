@@ -12,6 +12,42 @@ TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID_PROD', '')
 # Trading Pairs Configuration
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
+# Minimum Trade Amount in Base Currency
+MIN_TRADE_AMOUNT = {
+    'BTCUSDT': 0.0001,  # Minimum BTC
+    'ETHUSDT': 0.001,   # Minimum ETH
+    'SOLUSDT': 0.1      # Minimum SOL
+}
+
+# Volume Requirements (adjusted for current market conditions)
+MIN_24H_VOLUME = {
+    'BTCUSDT': 14000,   # Adjusted from 500000
+    'ETHUSDT': 10000,   # Adjusted from 200000
+    'SOLUSDT': 5000     # Adjusted from 50000
+}
+
+# Symbol Info
+SYMBOL_CONFIG = {
+    'BTCUSDT': {
+        'base_asset': 'BTC',
+        'quote_asset': 'USDT',
+        'price_precision': 2,
+        'quantity_precision': 6
+    },
+    'ETHUSDT': {
+        'base_asset': 'ETH',
+        'quote_asset': 'USDT',
+        'price_precision': 2,
+        'quantity_precision': 5
+    },
+    'SOLUSDT': {
+        'base_asset': 'SOL',
+        'quote_asset': 'USDT',
+        'price_precision': 3,
+        'quantity_precision': 2
+    }
+}
+
 # Portfolio Management
 MAX_INVESTMENT_PER_TRADE = 10.00     # Increased max investment per trade
 PORTFOLIO_STOP_LOSS = 0.15          # Stop trading if portfolio drops 15%
@@ -45,11 +81,6 @@ BUY_MULTIPLIER = 0.98              # 5% below market for better entry
 SELL_MULTIPLIER = 1.01             # 2% above market for better profit
 TOLERANCE = 0.02                   # Reduced for more precision
 MIN_VOLUME_MULTIPLIER = 1.0        # Minimum volume must be 1x average
-MIN_24H_VOLUME = {                 # Minimum 24h volume in USDT
-    'BTCUSDT': 500000,
-    'ETHUSDT': 200000,
-    'SOLUSDT': 50000
-}
 
 # Time Intervals
 INTERVAL = '15m'                    # 15-minute timeframe to reduce noise
@@ -100,13 +131,6 @@ VOLUME_MA_PERIOD = 24              # 24 periods for volume moving average
 # Database Configuration
 DB_FILE = 'table_transactions.db'
 MAX_DATABASE_RETRIES = 3       # Maximum database connection retries
-
-# Minimum Trade Requirements
-MIN_TRADE_AMOUNT = {
-    'BTCUSDT': 0.0001,  # Minimum BTC amount
-    'ETHUSDT': 0.001,   # Minimum ETH amount
-    'SOLUSDT': 0.1      # Minimum SOL amount
-}
 
 # Persentase kenaikan harga jual
 SELL_THRESHOLD_PERCENTAGE = 0.02  # Persentase kenaikan harga untuk melakukan penjualan (5%)

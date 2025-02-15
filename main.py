@@ -48,7 +48,7 @@ from config.settings import (
     BASE_URL,
     TELEGRAM_TOKEN,
     TELEGRAM_GROUP_ID,
-    SYMBOLS,
+    SYMBOL_CONFIG,
     INTERVAL,
     CACHE_LIFETIME,
     BUY_MULTIPLIER,
@@ -109,7 +109,7 @@ class TradingBot:
         self.available_balance = balances.get('USDT', {}).get('free', 0)  # Adjust based on your balance structure
 
         # Use symbols directly from settings without modification
-        self.trading_pairs = SYMBOLS  # ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+        self.trading_pairs = list(SYMBOL_CONFIG.keys())  # ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
         # Initialize trading parameters from settings
         self.min_trade_amounts = MIN_TRADE_AMOUNT
@@ -237,7 +237,7 @@ class TradingBot:
             'status_thread': True,
             'cleanup_thread': True
         }
-        self.error_counts = {symbol: 0 for symbol in SYMBOLS}
+        self.error_counts = {symbol: 0 for symbol in self.trading_pairs}
         self.MAX_ERRORS = 3
 
     def initialize_client(self):
@@ -258,7 +258,7 @@ class TradingBot:
     def setup_database(self):
         """Initialize database and historical data"""
         setup_database()
-        for symbol in SYMBOLS:
+        for symbol in SYMBOL_CONFIG:
             self.update_historical_data(symbol)
 
     def update_historical_data(self, symbol, interval='1h'):
@@ -448,7 +448,7 @@ class TradingBot:
                 message += f"USDT Available: {balances.get('USDT', {}).get('free', 0)}\n\n"
                 message += "🔐 Asset Positions:\n"
 
-                for symbol in SYMBOLS:
+                for symbol in SYMBOL_CONFIG:
                     if symbol in balances:
                         free_balance = balances[symbol]['free']
                         if self.is_valid_symbol(symbol):
@@ -461,9 +461,9 @@ class TradingBot:
 
                 send_telegram_message(message)
 
-                for symbol in SYMBOLS:
+                for symbol in SYMBOL_CONFIG:
                     try:
-                        self.process_symbol_trade(symbol, balances.get('USDT', {}).get('free', 0.0) / len(SYMBOLS), self.available_balance)
+                        self.process_symbol_trade(symbol, balances.get('USDT', {}).get('free', 0.0) / len(SYMBOL_CONFIG), self.available_balance)
                     except Exception as e:
                         self.logger.error(f"Error processing {symbol}: {e}")
                         send_telegram_message(f"❌ Error processing trade for {symbol}: {e}")
@@ -588,7 +588,7 @@ class TradingBot:
         """Cleanup resources"""
         try:
             # Cancel any pending orders
-            for symbol in SYMBOLS:
+            for symbol in SYMBOL_CONFIG:
                 try:
                     self.client.cancel_open_orders(symbol=symbol)
                 except Exception:
@@ -598,11 +598,21 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
-    def is_valid_symbol(self, symbol):
+    def get_symbol_info(self, symbol):
         """
-        Improved symbol validation that handles both raw and USDT-suffixed symbols
+        Get detailed information about a trading symbol
+        Returns base symbol and quote symbol
         """
-        return symbol in self.trading_pairs
+        if symbol not in self.trading_pairs:
+            self.logger.error(f"Symbol {symbol} not in configured trading pairs")
+            return None, None
+
+        config = SYMBOL_CONFIG.get(symbol)
+        if not config:
+            self.logger.error(f"No configuration found for symbol {symbol}")
+            return None, None
+
+        return config['base_asset'], config['quote_asset']
 
     def check_symbol_balance(self, symbol, balances):
         """
@@ -610,6 +620,8 @@ class TradingBot:
         Returns tuple of (has_balance, balance_amount)
         """
         base_symbol, _ = self.get_symbol_info(symbol)
+        if not base_symbol:
+            return False, 0
 
         if base_symbol in balances:
             balance = float(balances[base_symbol].get('free', 0))
@@ -634,8 +646,10 @@ class TradingBot:
         # Track processed base symbols to avoid duplicates
         processed_symbols = set()
 
-        for symbol in self.trading_pairs:
-            base_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
+        for symbol in SYMBOL_CONFIG:
+            base_symbol, _ = self.get_symbol_info(symbol)
+            if not base_symbol:
+                continue
 
             # Skip if we've already processed this base symbol
             if base_symbol in processed_symbols:
@@ -658,18 +672,11 @@ class TradingBot:
 
         return total_value
 
-    def get_symbol_info(self, symbol):
+    def is_valid_symbol(self, symbol):
         """
-        Get detailed information about a trading symbol
-        Returns base symbol and quote symbol
+        Improved symbol validation that handles both raw and USDT-suffixed symbols
         """
-        if symbol.endswith('USDT'):
-            base = symbol[:-4]
-            quote = 'USDT'
-        else:
-            base = symbol
-            quote = 'USDT'  # Default quote currency
-        return base, quote
+        return symbol in self.trading_pairs
 
     def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
         """
@@ -835,10 +842,10 @@ def main():
             if usdt_balance <= 0:
                 bot.logger.error("Saldo USDT kosong. Simulasi tidak dapat dijalankan.")
                 sys.exit(1)
-            usdt_per_symbol = usdt_balance / len(SYMBOLS)
+            usdt_per_symbol = usdt_balance / len(SYMBOL_CONFIG)
             bot.logger.debug(f"Saldo USDT: {usdt_balance}, Alokasi per simbol: {usdt_per_symbol}")
 
-            for symbol in SYMBOLS:
+            for symbol in SYMBOL_CONFIG:
                 bot.logger.info(f"Simulasi trade untuk {symbol} dengan alokasi {usdt_per_symbol} USDT")
                 bot.process_symbol_trade(symbol, usdt_per_symbol, bot.available_balance)
             # Setelah simulasi selesai, hentikan bot
