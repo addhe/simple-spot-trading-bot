@@ -4,7 +4,30 @@ from src.get_balances import get_balances
 from src.save_transaction import save_transaction
 from src.logger import logger
 from .get_last_price import get_last_price
+from collections import deque
+import numpy as np
 
+# Define moving average windows
+short_window = 5  # Short-term moving average window
+long_window = 20   # Long-term moving average window
+
+# Initialize a deque to store prices for moving average calculation
+prices = deque(maxlen=long_window)
+
+def calculate_moving_average(prices, window):
+    if len(prices) < window:
+        return None
+    return sum(prices[-window:]) / window
+
+def should_buy():
+    short_ma = calculate_moving_average(prices, short_window)
+    long_ma = calculate_moving_average(prices, long_window)
+    return short_ma > long_ma if short_ma and long_ma else False
+
+def should_sell():
+    short_ma = calculate_moving_average(prices, short_window)
+    long_ma = calculate_moving_average(prices, long_window)
+    return short_ma < long_ma if short_ma and long_ma else False
 
 def buy_asset(client, symbol, quantity):
     """
@@ -15,26 +38,32 @@ def buy_asset(client, symbol, quantity):
         if not _check_internet_connection():
             raise ConnectionError("No internet connection available")
 
-        # Check if we have enough balance
-        balances = get_balances()
-        usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
+        current_price = get_last_price(symbol)
+        prices.append(current_price)  # Add current price to the deque
 
-        order_value = quantity * get_last_price(symbol)
-        if usdt_balance < order_value:
-            raise ValueError(f"Insufficient USDT balance. Required: {order_value}, Available: {usdt_balance}")
+        if should_buy():
+            # Check if we have enough balance
+            balances = get_balances()
+            usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
 
-        order = client.order_market_buy(
-            symbol=symbol,
-            quantity=quantity
-        )
+            order_value = quantity * current_price
+            if usdt_balance < order_value:
+                raise ValueError(f"Insufficient USDT balance. Required: {order_value}, Available: {usdt_balance}")
 
-        # Log successful transaction
-        logger.info(f"✅ Buy order successful for {symbol}: Quantity: {quantity}, Price: {get_last_price(symbol)}, Total Value: {order_value} USDT")
+            order = client.order_market_buy(
+                symbol=symbol,
+                quantity=quantity
+            )
 
-        # Save transaction details
-        save_transaction(symbol, 'BUY', quantity, get_last_price(symbol), order_value)
+            # Log successful transaction
+            logger.info(f"✅ Buy order successful for {symbol}: Quantity: {quantity}, Price: {current_price}, Total Value: {order_value} USDT")
 
-        return order
+            # Save transaction details
+            save_transaction(symbol, 'BUY', quantity, current_price, order_value)
+
+            return order
+        else:
+            logger.info(f"Waiting for a better price to buy {symbol}.")
 
     except BinanceAPIException as e:
         logger.error(f"Binance API Exception during buy: {e}")
@@ -57,10 +86,11 @@ def convert_asset_to_usdt(client, symbol, quantity):
         logger.error(f"Error converting {symbol} to USDT: {e}")
 
 
-def sell_asset(client, symbol, buy_price, current_price, quantity):
-    if current_price > buy_price:
-        convert_asset_to_usdt(client, symbol, quantity)
-    else:
+def sell_asset(client, symbol, buy_price, quantity):
+    current_price = get_last_price(symbol)
+    prices.append(current_price)  # Add current price to the deque
+
+    if should_sell():
         try:
             # Existing sell logic
             order = client.order_market_sell(
@@ -69,16 +99,17 @@ def sell_asset(client, symbol, buy_price, current_price, quantity):
             )
 
             # Log successful transaction
-            logger.info(f"✅ Sell order successful for {symbol}: Quantity: {quantity}, Price: {get_last_price(symbol)}, Total Value: {quantity * get_last_price(symbol)} USDT")
+            logger.info(f"✅ Sell order successful for {symbol}: Quantity: {quantity}, Price: {current_price}, Total Value: {quantity * current_price} USDT")
 
             # Save transaction details
-            save_transaction(symbol, 'SELL', quantity, get_last_price(symbol), quantity * get_last_price(symbol))
+            save_transaction(symbol, 'SELL', quantity, current_price, quantity * current_price)
 
             return order
-
         except BinanceAPIException as e:
             logger.error(f"Binance API Exception during sell: {e}")
             raise
         except Exception as e:
             logger.error(f"Unexpected error during sell: {e}")
             raise
+    else:
+        logger.info(f"Waiting for a better price to sell {symbol}.")
