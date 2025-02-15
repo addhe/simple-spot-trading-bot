@@ -83,42 +83,47 @@ logger = setup_logging()
 
 class TradingBot:
     def __init__(self):
-        # Pastikan db_path sudah didefinisikan sebelum dipakai fungsi lain
-        self.db_path = 'table_transactions.db'
+        """Initialize trading bot with configuration"""
+        # Initialize logger
         self.logger = logger
-        self.initialize_state()
-        self.initialize_client()
-        self.setup_database()
+        self.logger.info("Initializing trading bot...")
 
-        # Inisialisasi parameter perdagangan
+        # Initialize database path
+        self.db_path = 'table_transactions.db'
+
+        # Initialize Binance client
+        self.initialize_client()
+
+        # Get initial balances
+        balances = get_balances()
+        self.available_balance = balances.get('USDT', {}).get('free', 0)
+
+        # Initialize trading pairs and parameters
+        self.trading_pairs = list(SYMBOL_CONFIG.keys())
+        self.min_trade_amounts = MIN_TRADE_AMOUNT
+        self.min_24h_volumes = MIN_24H_VOLUME
         self.buy_multiplier = BUY_MULTIPLIER
         self.sell_multiplier = SELL_MULTIPLIER
-        self.min_volume_multiplier = MIN_VOLUME_MULTIPLIER
-        self.min_position_size = MIN_POSITION_SIZE
-
-        # Risk management parameters
-        self.daily_loss_limit = -0.05  # 5% maximum daily loss
-        self.max_drawdown_limit = -0.15  # 15% maximum drawdown
-        self.position_size_limit = 0.1  # Maximum 10% of portfolio per position
-
-        # Initialize performance tracking
-        initialize_performance_tracking(self)
-
-        # Fetch balances from Binance
-        balances = get_balances()
-        self.available_balance = balances.get('USDT', {}).get('free', 0)  # Adjust based on your balance structure
-
-        # Use symbols directly from settings without modification
-        self.trading_pairs = list(SYMBOL_CONFIG.keys())  # ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
-
-        # Initialize trading parameters from settings
-        self.min_trade_amounts = MIN_TRADE_AMOUNT
-        self.min_volumes = MIN_24H_VOLUME
-        self.market_volatility_limits = MARKET_VOLATILITY_LIMIT
         self.trailing_stops = TRAILING_STOP
         self.take_profits = TAKE_PROFIT
 
+        # Initialize database and calculate initial value
+        self.setup_database()
+        initial_value = self.calculate_total_value(balances)
+        self.logger.info(f"Initial portfolio value: {initial_value} USDT")
         self.logger.info(f"Initialized trading pairs: {self.trading_pairs}")
+
+        # Initialize thread status and error tracking
+        self.thread_status = {
+            'main_thread': True,
+            'status_thread': True,
+            'cleanup_thread': True
+        }
+        self.error_counts = {symbol: 0 for symbol in self.trading_pairs}
+        self.MAX_ERRORS = 3
+
+        # Initialize performance tracking
+        initialize_performance_tracking(self)
 
     @retry_on_api_error
     def buy_asset_with_retry(self, symbol, quantity):
