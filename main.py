@@ -428,30 +428,6 @@ class TradingBot:
 
                 balances = get_balances()
                 self.logger.info(f"Balances fetched: {balances}")
-                self.logger.info(f"Balances structure: {balances.keys()}")
-                self.logger.info(f"Balances values: {balances.values()}")
-                if not balances:
-                    self.logger.warning("Could not fetch balances, skipping trade cycle")
-                    time.sleep(error_sleep)
-                    error_count += 1
-                    if error_count >= max_errors:
-                        self.logger.error("Trade thread: Too many balance fetch errors")
-                        self.app_status['trade_thread'] = False
-                    continue
-
-                # Reset error count on successful balance fetch
-                error_count = 0
-
-                usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
-                usdt_per_symbol = usdt_balance / len(SYMBOLS) if usdt_balance > 0 else 0
-
-                active_symbols = [s for s in SYMBOLS if self.error_counts[s] < self.MAX_ERRORS]
-                if not active_symbols:
-                    self.logger.warning("No active symbols to trade, all have exceeded error threshold")
-                    send_telegram_message("⚠️ Warning: All symbols have exceeded error threshold")
-                    time.sleep(CACHE_LIFETIME)
-                    continue
-
                 message = "📊 Trading Bot Status Report\n"
                 message += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                 message += "💰 Portfolio Summary:\n"
@@ -472,9 +448,9 @@ class TradingBot:
 
                 send_telegram_message(message)
 
-                for symbol in active_symbols:
+                for symbol in SYMBOLS:
                     try:
-                        self.process_symbol_trade(symbol, usdt_per_symbol, self.available_balance)
+                        self.process_symbol_trade(symbol, balances.get('USDT', {}).get('free', 0.0) / len(SYMBOLS), self.available_balance)
                     except Exception as e:
                         self.logger.error(f"Error processing {symbol}: {e}")
                         send_telegram_message(f"❌ Error processing trade for {symbol}: {e}")
