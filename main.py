@@ -68,7 +68,9 @@ from config.settings import (
     MAX_POSITIONS,
     MIN_VOLUME_MULTIPLIER,
     SELL_THRESHOLD_PERCENTAGE,
-    MIN_POSITION_SIZE
+    MIN_POSITION_SIZE,
+    MIN_TRADE_AMOUNT,
+    TAKE_PROFIT
 )
 
 # Jika parameter STOP_LOSS_PERCENTAGE belum ada di config, tetapkan default di sini:
@@ -107,9 +109,17 @@ class TradingBot:
         balances = get_balances()
         self.available_balance = balances.get('USDT', {}).get('free', 0)  # Adjust based on your balance structure
 
-        # Validate and normalize symbols
-        self.trading_symbols = [f"{symbol}USDT" if not symbol.endswith('USDT') else symbol for symbol in SYMBOLS]
-        self.logger.info(f"Initialized trading symbols: {self.trading_symbols}")
+        # Use symbols directly from settings without modification
+        self.trading_pairs = SYMBOLS  # ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+
+        # Initialize trading parameters from settings
+        self.min_trade_amounts = MIN_TRADE_AMOUNT
+        self.min_volumes = MIN_24H_VOLUME
+        self.market_volatility_limits = MARKET_VOLATILITY_LIMIT
+        self.trailing_stops = TRAILING_STOP
+        self.take_profits = TAKE_PROFIT
+
+        self.logger.info(f"Initialized trading pairs: {self.trading_pairs}")
 
     @retry_on_api_error
     def buy_asset_with_retry(self, symbol, quantity):
@@ -589,42 +599,85 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
+    def calculate_total_value(self, balances):
+        """
+        Calculate total portfolio value based on configured trading pairs
+        """
+        total_value = float(balances.get('USDT', {}).get('free', 0))
+
+        for full_symbol in self.trading_pairs:
+            base_symbol = full_symbol[:-4]  # Remove USDT suffix
+            if base_symbol in balances:
+                try:
+                    current_price = self.get_current_market_price(full_symbol)
+                    if current_price:
+                        balance = float(balances[base_symbol]['free'])
+                        total_value += balance * current_price
+                        self.logger.info(f"Added {base_symbol} value: {balance * current_price} USDT")
+                except Exception as e:
+                    self.logger.error(f"Error calculating value for {base_symbol}: {e}")
+
+        return total_value
+
+    def validate_trade_conditions(self, symbol, quantity, current_price):
+        """
+        Validate trading conditions based on configuration
+        """
+        # Check minimum trade amount
+        if quantity < self.min_trade_amounts.get(symbol, 0):
+            self.logger.warning(f"Trade amount {quantity} below minimum {self.min_trade_amounts[symbol]} for {symbol}")
+            return False
+
+        # Check 24h volume
+        volume_24h = self.get_24h_volume(symbol)
+        if volume_24h < self.min_volumes.get(symbol, 0):
+            self.logger.warning(f"24h volume {volume_24h} below minimum {self.min_volumes[symbol]} for {symbol}")
+            return False
+
+        # Check market volatility
+        volatility = self.calculate_volatility(symbol)
+        if volatility > self.market_volatility_limits.get(symbol, float('inf')):
+            self.logger.warning(f"Market volatility {volatility} above limit {self.market_volatility_limits[symbol]} for {symbol}")
+            return False
+
+        return True
+
     def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
         """
-        Improved symbol processing with proper normalization
+        Process trades only for configured trading pairs
         """
-        normalized_symbol = self.get_normalized_symbol(symbol)
-        self.logger.info(f"Processing trade for {normalized_symbol} with allocation {usdt_per_symbol} USDT")
-
-        # Get and validate balances
-        balances = get_balances()
-        base_symbol = symbol.replace('USDT', '')
-
-        # Check both raw and USDT-paired balance formats
-        symbol_balance = balances.get(base_symbol, {}).get('free', 0)
-
-        current_market_price = self.get_current_market_price(normalized_symbol)
-        if current_market_price is None:
-            self.logger.error(f"Could not get market price for {normalized_symbol}")
+        if symbol not in self.trading_pairs:
+            self.logger.error(f"Symbol {symbol} not in configured trading pairs")
             return
 
-        # Rest of trading logic...
+        base_symbol = symbol[:-4]  # Remove USDT suffix
+        balances = get_balances()
 
-    def get_normalized_symbol(self, symbol):
-        """
-        Ensures consistent symbol format for Binance API calls
-        """
-        if not symbol.endswith('USDT'):
-            return f"{symbol}USDT"
-        return symbol
+        current_price = self.get_current_market_price(symbol)
+        if not current_price:
+            self.logger.error(f"Could not get current price for {symbol}")
+            return
 
-    def is_valid_symbol(self, symbol):
-        """
-        Improved symbol validation that handles both raw and USDT-suffixed symbols
-        """
-        # Handle both cases: raw symbol (e.g., 'BTC') and paired symbol (e.g., 'BTCUSDT')
-        normalized_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
-        return normalized_symbol in [s[:-4] if s.endswith('USDT') else s for s in self.trading_symbols]
+        # Calculate potential quantity based on available USDT
+        potential_quantity = usdt_per_symbol / current_price
+
+        # Validate trade conditions
+        if not self.validate_trade_conditions(symbol, potential_quantity, current_price):
+            return
+
+        # Continue with trading logic based on configuration parameters
+        if self.should_buy(symbol, current_price):
+            try:
+                # Use configured stop loss and take profit
+                stop_loss = current_price * (1 - STOP_LOSS_PERCENTAGE)
+                take_profit = current_price * self.take_profits.get(symbol, 1.02)
+
+                order = self.buy_asset_with_retry(symbol, potential_quantity)
+                if order:
+                    self.logger.info(f"Buy order executed for {symbol} at {current_price}")
+                    self.update_position_tracking(symbol, 'BUY', potential_quantity, current_price)
+            except Exception as e:
+                self.logger.error(f"Error executing buy order for {symbol}: {e}")
 
     def get_current_market_price(self, symbol):
         """
@@ -641,14 +694,21 @@ class TradingBot:
             self.logger.error(f"Unexpected error getting price for {normalized_symbol}: {e}")
             return None
 
-    def calculate_total_value(self, balances):
-        total_value = 0
-        for symbol, balance in balances.items():
-            if symbol != 'USDT':
-                current_price = self.get_current_market_price(symbol)
-                if current_price:
-                    total_value += float(balance['free']) * current_price
-        return total_value + float(balances.get('USDT', {}).get('free', 0.0))
+    def get_normalized_symbol(self, symbol):
+        """
+        Ensures consistent symbol format for Binance API calls
+        """
+        if not symbol.endswith('USDT'):
+            return f"{symbol}USDT"
+        return symbol
+
+    def is_valid_symbol(self, symbol):
+        """
+        Improved symbol validation that handles both raw and USDT-suffixed symbols
+        """
+        # Handle both cases: raw symbol (e.g., 'BTC') and paired symbol (e.g., 'BTCUSDT')
+        normalized_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
+        return normalized_symbol in [s[:-4] if s.endswith('USDT') else s for s in self.trading_pairs]
 
 def main():
     """Main entry point"""
