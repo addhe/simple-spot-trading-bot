@@ -9,6 +9,7 @@ from config.settings import (
     MIN_24H_VOLUME,
     MARKET_VOLATILITY_LIMIT
 )
+from src.logger import logger
 
 def get_24h_stats(symbol):
     """Get 24h trading statistics for a symbol"""
@@ -23,6 +24,7 @@ def get_24h_stats(symbol):
             'low': float(stats['lowPrice'])
         }
     except Exception as e:
+        logger.error(f"Failed to get 24h stats for {symbol}: {str(e)}")
         return None
 
 def send_asset_status():
@@ -100,4 +102,5 @@ def send_asset_status():
         send_telegram_message("\n".join(message))
 
     except Exception as e:
+        logger.error(f"Error in asset status report: {str(e)}")
         send_telegram_message(f"⚠️ Error in asset status report: {str(e)}")

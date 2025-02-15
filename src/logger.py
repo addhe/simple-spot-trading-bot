@@ -23,3 +23,9 @@ def setup_logging():
         logger.addHandler(handler)
 
     return logger
+
+# Create a logger instance at the module level
+def get_logger():
+    return setup_logging()
+
+logger = get_logger()
