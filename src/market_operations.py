@@ -110,9 +110,10 @@ def get_available_usdt(self):
 def should_buy(self, symbol, current_price):
     """Determine if the bot should buy the asset."""
     moving_average = self.get_moving_average(symbol)
+    self.logger.info(f"Current Price: {current_price}, Moving Average: {moving_average}")
 
-    # Example condition: Buy if current price is significantly below moving average
-    if current_price < moving_average * 0.95:  # Allow for a 5% buffer
+    # Buy if current price is significantly below moving average (1% buffer)
+    if current_price < moving_average * 0.99:  # Allow for a 1% buffer
         return True
     else:
         self.logger.info(f"Conditions not favorable for buying {symbol}: "
