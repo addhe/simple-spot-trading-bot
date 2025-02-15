@@ -92,6 +92,7 @@ def process_symbol_trade(self, symbol):
 
 def get_available_usdt(self):
     """Fetch the available USDT from the Binance account."""
+    self.logger.info("Attempting to fetch available USDT...")  # Log when fetching starts
     try:
         balances = self.client.get_asset_balance(asset='USDT')
         available_balance = float(balances['free'])
