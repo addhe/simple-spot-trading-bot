@@ -35,7 +35,12 @@ TAKE_PROFIT = {                     # Take profit targets
 BUY_MULTIPLIER = 0.98              # 5% below market for better entry
 SELL_MULTIPLIER = 1.01             # 2% above market for better profit
 TOLERANCE = 0.02                   # Reduced for more precision
-MIN_VOLUME_MULTIPLIER = 1.2        # Minimum volume must be 1.2x average
+MIN_VOLUME_MULTIPLIER = 1.0        # Minimum volume must be 1x average
+MIN_24H_VOLUME = {                 # Minimum 24h volume in USDT
+    'BTCUSDT': 500000,
+    'ETHUSDT': 200000,
+    'SOLUSDT': 50000
+}
 
 # Time Intervals
 INTERVAL = '15m'                    # 15-minute timeframe to reduce noise
@@ -60,7 +65,7 @@ BB_STD = 2
 MAX_POSITIONS = 3                   # Maximum concurrent positions
 MIN_USDT_BALANCE = 50               # Minimum USDT to maintain (adjusted from 100)
 MIN_USD_BALANCE = 1.00              # Minimum USD balance required for trading
-MARKET_VOLATILITY_LIMIT = 0.15     # Increase market volatility limit to 15%
+MARKET_VOLATILITY_LIMIT = 0.20     # Increase market volatility limit to 20%
 
 # Rate Limiting
 RATE_LIMIT_PER_MINUTE = 1200        # Binance limit
@@ -83,11 +88,6 @@ DETAILED_LOGGING = True            # Enable detailed logging
 
 # Volume Filters
 VOLUME_MA_PERIOD = 24              # 24 periods for volume moving average
-MIN_24H_VOLUME = {                 # Minimum 24h volume in USDT
-    'BTCUSDT': 1000000,
-    'ETHUSDT': 500000,
-    'SOLUSDT': 100000
-}
 
 # Database Configuration
 DB_FILE = 'table_transactions.db'
