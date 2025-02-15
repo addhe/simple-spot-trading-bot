@@ -456,11 +456,13 @@ class TradingBot:
                 message += f"USDT Available: {balances.get('USDT', {}).get('free', 0)}\n\n"
                 message += "🔐 Asset Positions:\n"
 
-                for symbol in SYMBOLS:
-                    if symbol in balances:
+                for symbol in balances:
+                    if symbol != 'USDT':
                         free_balance = balances[symbol]['free']
                         current_price = self.get_current_market_price(symbol)
                         message += f"{symbol}: Current Price: {current_price}, Balance: {free_balance}\n"
+                    else:
+                        message += f"{symbol}: Balance: {balances[symbol]['free']}\n"
 
                 send_telegram_message(message)
 

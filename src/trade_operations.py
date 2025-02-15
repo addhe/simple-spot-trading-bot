@@ -14,6 +14,9 @@ long_window = 20   # Long-term moving average window
 # Initialize a deque to store prices for moving average calculation
 prices = deque(maxlen=long_window)
 
+# Define valid symbols
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'LTCUSDT']  # Add more symbols as needed
+
 def calculate_moving_average(prices, window):
     if len(prices) < window:
         return None
@@ -62,6 +65,9 @@ def buy_asset(client, symbol, quantity):
     """
     Perform a market buy of the specified asset on Binance.
     """
+    if symbol not in SYMBOLS:
+        logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
+        return
     logger.info(f"Processing trade for {symbol}")
     try:
         # Check internet connection
@@ -120,6 +126,9 @@ def convert_asset_to_usdt(client, symbol, quantity):
 
 
 def sell_asset(client, symbol, buy_price, quantity):
+    if symbol not in SYMBOLS:
+        logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
+        return
     logger.info(f"Processing trade for {symbol}")
     current_price = get_last_price(symbol)
     if current_price is None:
