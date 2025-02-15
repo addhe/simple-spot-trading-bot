@@ -45,7 +45,10 @@ def should_buy():
     rsi = calculate_rsi(prices)
     upper_band, lower_band = calculate_bollinger_bands(prices)
     current_price = prices[-1]
-    return (short_ma > long_ma and rsi < 30 and current_price < lower_band) if short_ma and long_ma and rsi and upper_band and lower_band else False
+
+    # Adjusted condition to allow buying if current price is within 1% of moving average
+    return (short_ma > long_ma and rsi < 30 and current_price < lower_band) or \
+           (current_price < long_ma * 1.01 and current_price > long_ma * 0.99)
 
 def should_sell():
     short_ma = calculate_moving_average(prices, short_window)
