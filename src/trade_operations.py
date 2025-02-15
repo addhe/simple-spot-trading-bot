@@ -17,6 +17,9 @@ prices = deque(maxlen=long_window)
 # Define valid symbols
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'LTCUSDT']  # Add more symbols as needed
 
+def is_valid_symbol(symbol):
+    return symbol in SYMBOLS
+
 def calculate_moving_average(prices, window):
     if len(prices) < window:
         return None
@@ -65,10 +68,11 @@ def buy_asset(client, symbol, quantity):
     """
     Perform a market buy of the specified asset on Binance.
     """
-    logger.info(f"Processing trade for {symbol}")
-    if symbol not in SYMBOLS:
+    if not is_valid_symbol(symbol):
         logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
         return
+
+    logger.info(f"Processing trade for {symbol}")
     try:
         # Check internet connection
         if not _check_internet_connection():
@@ -76,7 +80,7 @@ def buy_asset(client, symbol, quantity):
 
         current_price = get_last_price(symbol)
         if current_price is None:
-            logger.error(f"Invalid symbol: {symbol}")
+            logger.error(f"Failed to retrieve price for {symbol}")
             return
         prices.append(current_price)  # Add current price to the deque
 
@@ -113,6 +117,10 @@ def buy_asset(client, symbol, quantity):
 
 
 def convert_asset_to_usdt(client, symbol, quantity):
+    if not is_valid_symbol(symbol):
+        logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
+        return
+
     try:
         response = client.sapi_post('/v1/asset/convert', {
             'fromAsset': symbol,
@@ -126,13 +134,14 @@ def convert_asset_to_usdt(client, symbol, quantity):
 
 
 def sell_asset(client, symbol, buy_price, quantity):
-    logger.info(f"Processing trade for {symbol}")
-    if symbol not in SYMBOLS:
+    if not is_valid_symbol(symbol):
         logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
         return
+
+    logger.info(f"Processing trade for {symbol}")
     current_price = get_last_price(symbol)
     if current_price is None:
-        logger.error(f"Invalid symbol: {symbol}")
+        logger.error(f"Failed to retrieve price for {symbol}")
         return
     prices.append(current_price)  # Add current price to the deque
 
