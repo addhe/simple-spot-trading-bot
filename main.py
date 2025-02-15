@@ -37,7 +37,6 @@ from src.handle_stop_loss import handle_stop_loss
 from src.calculate_position_size import calculate_position_size
 from src.risk_management import check_risk_management
 from src.dynamic_multiplier import adjust_buy_multiplier
-from src.get_historical_prices import get_historical_prices
 from src.utils import retry_on_api_error
 from src.performance_tracking import initialize_performance_tracking, update_performance_metrics
 from src.trade_operations import buy_asset, sell_asset
@@ -728,7 +727,7 @@ class TradingBot:
         """
         Calculate the market volatility for a given symbol over a specified period.
         """
-        historical_prices = get_historical_prices(symbol, interval='1d', limit=period)
+        historical_prices = self.get_historical_prices(symbol, period)
         if not historical_prices:
             self.logger.error(f"No historical prices available for {symbol}")
             return float('inf')  # Return high volatility if no data is available
@@ -736,6 +735,20 @@ class TradingBot:
         returns = np.log(np.array(historical_prices[1:]) / np.array(historical_prices[:-1]))
         volatility = np.std(returns) * np.sqrt(period)  # Annualized volatility
         return volatility
+
+    def get_historical_prices(self, symbol, period):
+        """
+        Fetch historical prices for a given symbol over a specified period.
+        """
+        try:
+            klines = self.client.get_historical_klines(symbol, Client.KLINE_INTERVAL_1DAY, f"{period} day ago UTC")
+            return [float(kline[4]) for kline in klines]  # Closing prices
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API error getting historical prices for {symbol}: {e}")
+            return []
+        except Exception as e:
+            self.logger.error(f"Unexpected error getting historical prices for {symbol}: {e}")
+            return []
 
 def main():
     """Main entry point"""
