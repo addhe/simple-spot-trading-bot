@@ -724,6 +724,19 @@ class TradingBot:
             self.logger.error(f"Unexpected error getting 24h volume for {symbol}: {e}")
             return 0
 
+    def calculate_volatility(self, symbol, period=14):
+        """
+        Calculate the market volatility for a given symbol over a specified period.
+        """
+        historical_prices = self.get_historical_prices(symbol, period)
+        if not historical_prices:
+            self.logger.error(f"No historical prices available for {symbol}")
+            return float('inf')  # Return high volatility if no data is available
+
+        returns = np.log(np.array(historical_prices[1:]) / np.array(historical_prices[:-1]))
+        volatility = np.std(returns) * np.sqrt(period)  # Annualized volatility
+        return volatility
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Trading Bot Runner")
