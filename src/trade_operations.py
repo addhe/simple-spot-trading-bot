@@ -65,10 +65,10 @@ def buy_asset(client, symbol, quantity):
     """
     Perform a market buy of the specified asset on Binance.
     """
+    logger.info(f"Processing trade for {symbol}")
     if symbol not in SYMBOLS:
         logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
         return
-    logger.info(f"Processing trade for {symbol}")
     try:
         # Check internet connection
         if not _check_internet_connection():
@@ -126,10 +126,10 @@ def convert_asset_to_usdt(client, symbol, quantity):
 
 
 def sell_asset(client, symbol, buy_price, quantity):
+    logger.info(f"Processing trade for {symbol}")
     if symbol not in SYMBOLS:
         logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
         return
-    logger.info(f"Processing trade for {symbol}")
     current_price = get_last_price(symbol)
     if current_price is None:
         logger.error(f"Invalid symbol: {symbol}")
