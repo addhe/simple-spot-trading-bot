@@ -756,6 +756,30 @@ class TradingBot:
             self.logger.error(f"Unexpected error getting historical prices for {symbol}: {e}")
             return []
 
+    def validate_trade_conditions(self, symbol, quantity, current_price):
+        """
+        Validate trading conditions based on configuration
+        """
+        # Check minimum trade amount
+        if quantity < self.min_trade_amounts.get(symbol, 0):
+            self.logger.warning(f"Trade amount {quantity} below minimum {self.min_trade_amounts[symbol]} for {symbol}")
+            return False
+
+        # Check 24h volume
+        volume_24h = self.get_24h_volume(symbol)
+        if volume_24h < self.min_volumes.get(symbol, 0):
+            self.logger.warning(f"24h volume {volume_24h} below minimum {self.min_volumes[symbol]} for {symbol}")
+            return False
+
+        # Check market volatility
+        volatility = self.calculate_volatility(symbol)
+        volatility_limit = self.market_volatility_limits.get(symbol, float('inf'))
+        if volatility > volatility_limit:
+            self.logger.warning(f"Market volatility {volatility:.4f} above limit {volatility_limit:.4f} for {symbol}")
+            return False
+
+        return True
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Trading Bot Runner")
