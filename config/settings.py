@@ -57,16 +57,16 @@ DAILY_LOSS_LIMIT = -0.03             # Stop trading if daily loss reaches 3%
 STOP_LOSS_PERCENTAGE = 0.03         # 3% stop loss for quicker cut loss
 MIN_POSITION_SIZE = 0.0001          # Minimum position size for trades
 TRAILING_STOP = {                   # Custom trailing stop per pair
-    'BTCUSDT': 0.015,               # BTC more stable, 1.5% trailing stop
-    'ETHUSDT': 0.02,                # ETH moderate volatility, 2%
-    'SOLUSDT': 0.03                 # SOL more volatile, 3%
+    'BTCUSDT': 0.008,               # BTC more stable, 1.5% trailing stop
+    'ETHUSDT': 0.01,                # ETH moderate volatility, 2%
+    'SOLUSDT': 0.012                 # SOL more volatile, 3%
 }
 
 # Take Profit and Stop Loss Settings
 TAKE_PROFIT = {
-    'BTCUSDT': 1.02,  # 2% profit target
-    'ETHUSDT': 1.02,
-    'SOLUSDT': 1.02
+    'BTCUSDT': 0.015,  # 2% profit target
+    'ETHUSDT': 0.02,
+    'SOLUSDT': 0.025
 }
 
 # Market Volatility Settings

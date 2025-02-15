@@ -262,9 +262,40 @@ class TradingBot:
 
     def setup_database(self):
         """Initialize database and historical data"""
-        setup_database()
-        for symbol in SYMBOL_CONFIG:
-            self.update_historical_data(symbol)
+        try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor()
+
+            # Create transactions table if not exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    quantity REAL NOT NULL,
+                    price REAL NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Create symbol stats table for tracking highest prices
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS symbol_stats (
+                    symbol TEXT PRIMARY KEY,
+                    highest_price REAL NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            conn.commit()
+
+            # Initialize historical data
+            for symbol in self.trading_pairs:
+                self.update_historical_data(symbol)
+
+        except Exception as e:
+            self.logger.error(f"Error setting up database: {e}")
+            raise
 
     def update_historical_data(self, symbol, interval='1h'):
         conn = sqlite3.connect(self.db_path)
@@ -396,26 +427,51 @@ class TradingBot:
             return False
 
     def get_highest_price(self, symbol):
-        """Mengambil harga tertinggi dari database dalam 24 jam terakhir"""
+        """
+        Get the highest price recorded for a symbol since last buy
+        """
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute(f"""
-                SELECT MAX(close_price)
-                FROM historical_data
-                WHERE symbol = ?
-                AND timestamp >= datetime('now', '-24 hours', 'localtime')
+            cursor = self.get_db_connection().cursor()
+            cursor.execute("""
+                SELECT highest_price FROM symbol_stats
+                WHERE symbol = ? ORDER BY timestamp DESC LIMIT 1
             """, (symbol,))
             result = cursor.fetchone()
-            conn.close()
-
-            if result and result[0]:
-                return float(result[0])
-            else:
-                return None  # Tidak ada data
-
+            return float(result[0]) if result else 0
         except Exception as e:
             self.logger.error(f"Error getting highest price for {symbol}: {e}")
+            return 0
+
+    def update_highest_price(self, symbol, price):
+        """
+        Update the highest price for a symbol
+        """
+        try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO symbol_stats (symbol, highest_price, timestamp)
+                VALUES (?, ?, datetime('now'))
+            """, (symbol, price))
+            conn.commit()
+        except Exception as e:
+            self.logger.error(f"Error updating highest price for {symbol}: {e}")
+
+    def get_last_buy_price(self, symbol):
+        """
+        Get the last buy price for a symbol
+        """
+        try:
+            cursor = self.get_db_connection().cursor()
+            cursor.execute("""
+                SELECT price FROM transactions
+                WHERE symbol = ? AND type = 'BUY'
+                ORDER BY timestamp DESC LIMIT 1
+            """, (symbol,))
+            result = cursor.fetchone()
+            return float(result[0]) if result else None
+        except Exception as e:
+            self.logger.error(f"Error getting last buy price for {symbol}: {e}")
             return None
 
     def handle_symbol_error(self, symbol, error):
@@ -882,6 +938,86 @@ class TradingBot:
 
         except Exception as e:
             self.logger.error(f"Error sending status update: {e}")
+
+    def check_take_profit(self, symbol, current_price, buy_price):
+        """
+        Check if we should take profit based on current price and buy price
+        """
+        if not buy_price:
+            return False
+
+        profit_percentage = (current_price - buy_price) / buy_price
+        take_profit_target = self.take_profits.get(symbol, 0.02)  # Default 2%
+
+        if profit_percentage >= take_profit_target:
+            self.logger.info(f"Take profit triggered for {symbol}. Profit: {profit_percentage:.2%}")
+            return True
+
+        return False
+
+    def check_trailing_stop(self, symbol, current_price, highest_price):
+        """
+        Check if trailing stop loss is triggered
+        """
+        if not highest_price:
+            return False
+
+        price_drop = (highest_price - current_price) / highest_price
+        trailing_stop = self.trailing_stops.get(symbol, 0.01)  # Default 1%
+
+        if price_drop >= trailing_stop:
+            self.logger.info(f"Trailing stop triggered for {symbol}. Drop: {price_drop:.2%}")
+            return True
+
+        return False
+
+    def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
+        """Process trades for configured trading pairs"""
+        try:
+            # Get current market data
+            current_price = self.get_current_market_price(symbol)
+            if not current_price:
+                self.logger.error(f"Could not get current price for {symbol}")
+                return
+
+            # Get last buy price from database
+            last_buy = self.get_last_buy_price(symbol)
+
+            # Check if we have any position
+            balances = get_balances()
+            has_position, position_size = self.check_symbol_balance(symbol, balances)
+
+            if has_position:
+                # Update highest price if needed
+                highest_price = self.get_highest_price(symbol)
+                if current_price > highest_price:
+                    self.update_highest_price(symbol, current_price)
+
+                # Check take profit and trailing stop
+                should_take_profit = self.check_take_profit(symbol, current_price, last_buy)
+                should_trail_stop = self.check_trailing_stop(symbol, current_price, highest_price)
+
+                if should_take_profit or should_trail_stop:
+                    success = self.sell_asset(symbol, position_size)
+                    if success:
+                        self.logger.info(f"Successfully sold {position_size} {symbol} at {current_price}")
+                        # Reset highest price after successful sell
+                        self.update_highest_price(symbol, 0)
+                    return
+
+            # Check if we should buy
+            if self.should_buy(symbol, current_price):
+                quantity = self.calculate_position_size(symbol, current_price, usdt_per_symbol)
+                if quantity > 0:
+                    success = self.buy_asset(symbol, quantity)
+                    if success:
+                        self.logger.info(f"Successfully bought {quantity} {symbol} at {current_price}")
+                        # Initialize highest price after buy
+                        self.update_highest_price(symbol, current_price)
+
+        except Exception as e:
+            self.logger.error(f"Error processing {symbol}: {e}")
+            self.error_counts[symbol] += 1
 
 def status_monitor(bot):
     """Monitor and report bot status"""
