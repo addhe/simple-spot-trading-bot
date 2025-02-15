@@ -598,6 +598,25 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
+    def is_valid_symbol(self, symbol):
+        """
+        Improved symbol validation that handles both raw and USDT-suffixed symbols
+        """
+        return symbol in self.trading_pairs
+
+    def check_symbol_balance(self, symbol, balances):
+        """
+        Check if we have any balance for a given symbol
+        Returns tuple of (has_balance, balance_amount)
+        """
+        base_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
+
+        if base_symbol in balances:
+            balance = float(balances[base_symbol].get('free', 0))
+            if balance > 0:
+                return True, balance
+        return False, 0
+
     def calculate_total_value(self, balances):
         """
         Calculate total portfolio value based on configured trading pairs
@@ -609,60 +628,31 @@ class TradingBot:
         total_value += usdt_balance
 
         for symbol in self.trading_pairs:
-            # Extract base symbol (e.g., 'BTC' from 'BTCUSDT')
-            base_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
-
-            if base_symbol in balances:
-                # Get asset balance and current price
-                asset_balance = float(balances[base_symbol].get('free', 0))
+            has_balance, balance_amount = self.check_symbol_balance(symbol, balances)
+            if has_balance:
                 current_price = self.get_current_market_price(symbol)
-
-                if current_price and asset_balance > 0:
-                    asset_value = asset_balance * current_price
+                if current_price:
+                    asset_value = balance_amount * current_price
                     total_value += asset_value
-                    self.logger.info(f"Added {base_symbol} value: {asset_value} USDT")
+                    self.logger.info(f"Added {symbol[:-4]} value: {asset_value} USDT")
             else:
-                self.logger.debug(f"Base symbol {base_symbol} not found in balances")
+                self.logger.debug(f"No balance found for {symbol}")
 
         return total_value
-
-    def validate_trade_conditions(self, symbol, quantity, current_price):
-        """
-        Validate trading conditions based on configuration
-        """
-        # Check minimum trade amount
-        if quantity < self.min_trade_amounts.get(symbol, 0):
-            self.logger.warning(f"Trade amount {quantity} below minimum {self.min_trade_amounts[symbol]} for {symbol}")
-            return False
-
-        # Check 24h volume
-        volume_24h = self.get_24h_volume(symbol)
-        if volume_24h < self.min_volumes.get(symbol, 0):
-            self.logger.warning(f"24h volume {volume_24h} below minimum {self.min_volumes[symbol]} for {symbol}")
-            return False
-
-        # Check market volatility
-        volatility = self.calculate_volatility(symbol)
-        if volatility > self.market_volatility_limits.get(symbol, float('inf')):
-            self.logger.warning(f"Market volatility {volatility} above limit {self.market_volatility_limits[symbol]} for {symbol}")
-            return False
-
-        return True
 
     def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
         """
         Process trades only for configured trading pairs
         """
-        if symbol not in self.trading_pairs:
+        if not self.is_valid_symbol(symbol):
             self.logger.error(f"Symbol {symbol} not in configured trading pairs")
             return
 
-        # Extract base symbol (e.g., 'BTC' from 'BTCUSDT')
-        base_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
         balances = get_balances()
+        has_balance, balance_amount = self.check_symbol_balance(symbol, balances)
 
-        if base_symbol not in balances:
-            self.logger.debug(f"Base symbol {base_symbol} not in balances, initializing position")
+        if not has_balance:
+            self.logger.debug(f"No existing balance for {symbol}, proceeding with trade evaluation")
 
         # Retry mechanism for getting current price
         current_price = None
@@ -700,7 +690,6 @@ class TradingBot:
                     self.update_position_tracking(symbol, 'BUY', potential_quantity, current_price)
             except Exception as e:
                 self.logger.error(f"Error executing buy order for {symbol}: {e}")
-                # Handle error and potentially disable trading for this symbol
                 self.handle_symbol_error(symbol, e)
 
     def get_current_market_price(self, symbol):
@@ -725,14 +714,6 @@ class TradingBot:
         if not symbol.endswith('USDT'):
             return f"{symbol}USDT"
         return symbol
-
-    def is_valid_symbol(self, symbol):
-        """
-        Improved symbol validation that handles both raw and USDT-suffixed symbols
-        """
-        # Handle both cases: raw symbol (e.g., 'BTC') and paired symbol (e.g., 'BTCUSDT')
-        normalized_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
-        return normalized_symbol in [s[:-4] if s.endswith('USDT') else s for s in self.trading_pairs]
 
     def get_24h_volume(self, symbol):
         """
