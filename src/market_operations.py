@@ -22,6 +22,7 @@ def get_last_price(symbol):
 
 def process_symbol_trade(self, symbol):
     """Process trading logic for a symbol with error handling."""
+    self.logger.info(f"Starting trade processing for {symbol}")  # Log entry into the method
     try:
         market_stats = self.get_market_stats(symbol)
         if not market_stats:
