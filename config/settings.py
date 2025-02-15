@@ -42,12 +42,14 @@ INTERVAL = '15m'                    # 15-minute timeframe to reduce noise
 CACHE_LIFETIME = 60                 # 1 minute for faster response
 STATUS_INTERVAL = 1800              # 30 minutes for better monitoring
 
+# Trading Strategy Parameters
+RSI_OVERBOUGHT = 70  # RSI level for overbought condition
+RSI_OVERSOLD = 30    # RSI level for oversold condition
+BOLLINGER_WINDOW = 20 # Window for Bollinger Bands
+BOLLINGER_STD_DEV = 2 # Standard deviation for Bollinger Bands
+
 # Technical Analysis Parameters
 RSI_PERIOD = 14
-RSI_OVERBOUGHT = 75                 # Increased for stronger confirmation
-RSI_OVERSOLD = 35                   # Decreased for stronger confirmation
-
-# Additional Technical Indicators
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9

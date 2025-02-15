@@ -19,15 +19,41 @@ def calculate_moving_average(prices, window):
         return None
     return sum(prices[-window:]) / window
 
+def calculate_rsi(prices, window=14):
+    if len(prices) < window:
+        return None
+    deltas = np.diff(prices)
+    gain = np.where(deltas > 0, deltas, 0)
+    loss = np.where(deltas < 0, -deltas, 0)
+    avg_gain = np.mean(gain[-window:])
+    avg_loss = np.mean(loss[-window:])
+    rs = avg_gain / avg_loss if avg_loss > 0 else 0
+    return 100 - (100 / (1 + rs))
+
+def calculate_bollinger_bands(prices, window=20, num_std_dev=2):
+    if len(prices) < window:
+        return None, None
+    rolling_mean = np.mean(prices[-window:])
+    rolling_std = np.std(prices[-window:])
+    upper_band = rolling_mean + (rolling_std * num_std_dev)
+    lower_band = rolling_mean - (rolling_std * num_std_dev)
+    return upper_band, lower_band
+
 def should_buy():
     short_ma = calculate_moving_average(prices, short_window)
     long_ma = calculate_moving_average(prices, long_window)
-    return short_ma > long_ma if short_ma and long_ma else False
+    rsi = calculate_rsi(prices)
+    upper_band, lower_band = calculate_bollinger_bands(prices)
+    current_price = prices[-1]
+    return (short_ma > long_ma and rsi < 30 and current_price < lower_band) if short_ma and long_ma and rsi and upper_band and lower_band else False
 
 def should_sell():
     short_ma = calculate_moving_average(prices, short_window)
     long_ma = calculate_moving_average(prices, long_window)
-    return short_ma < long_ma if short_ma and long_ma else False
+    rsi = calculate_rsi(prices)
+    upper_band, lower_band = calculate_bollinger_bands(prices)
+    current_price = prices[-1]
+    return (short_ma < long_ma and rsi > 70 and current_price > upper_band) if short_ma and long_ma and rsi and upper_band and lower_band else False
 
 def buy_asset(client, symbol, quantity):
     """
