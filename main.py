@@ -728,7 +728,7 @@ class TradingBot:
         """
         Calculate the market volatility for a given symbol over a specified period.
         """
-        historical_prices = self.get_historical_prices(symbol, period)
+        historical_prices = get_historical_prices(symbol, interval='1d', limit=period)
         if not historical_prices:
             self.logger.error(f"No historical prices available for {symbol}")
             return float('inf')  # Return high volatility if no data is available
