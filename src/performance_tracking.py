@@ -1,6 +1,7 @@
 import logging
 from src.get_balances import get_balances
 from src.logger import logger
+from config.settings import SYMBOLS
 
 
 def initialize_performance_tracking(db_path):

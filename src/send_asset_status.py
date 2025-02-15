@@ -3,8 +3,8 @@ import pytz
 from .get_balances import get_balances
 from .get_last_price import get_last_price
 from .send_telegram_message import send_telegram_message
+from config.settings import SYMBOLS
 from config.settings import (
-    SYMBOLS,
     DETAILED_LOGGING,
     MIN_24H_VOLUME,
     MARKET_VOLATILITY_LIMIT
