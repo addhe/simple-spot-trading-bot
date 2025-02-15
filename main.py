@@ -823,6 +823,76 @@ class TradingBot:
 
         return True
 
+    def send_status_update(self):
+        """Send status update via Telegram"""
+        try:
+            balances = get_balances()
+            if not balances:
+                self.logger.error("Failed to fetch balances")
+                return
+
+            total_value = self.calculate_total_value(balances)
+
+            # Format timestamp
+            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Create message header
+            message = f"📊 Trading Bot Status Report\n"
+            message += f"⏰ {timestamp} UTC\n\n"
+
+            # Add portfolio summary
+            message += "💰 Portfolio Summary:\n"
+            message += f"Total Value: ${total_value:.2f}\n"
+            usdt_balance = balances.get('USDT', {}).get('free', 0)
+            message += f"USDT Available: ${usdt_balance:.2f}\n"
+            message += f"USDT Locked: ${balances.get('USDT', {}).get('locked', 0):.2f}\n\n"
+
+            # Add asset positions
+            message += "🔐 Asset Positions:\n"
+
+            for symbol in self.trading_pairs:
+                base_asset, _ = self.get_symbol_info(symbol)
+                if base_asset in balances:
+                    free_balance = balances[base_asset]['free']
+                    locked_balance = balances[base_asset]['locked']
+                    if free_balance > 0 or locked_balance > 0:
+                        # Get current price
+                        current_price = self.get_current_market_price(symbol)
+                        if current_price:
+                            value_usdt = (free_balance + locked_balance) * current_price
+                            message += f"{base_asset}: {free_balance:.8f}"
+                            if locked_balance > 0:
+                                message += f" (🔒 {locked_balance:.8f})"
+                            message += f" [${value_usdt:.2f}]\n"
+                            message += f"Current Price: ${current_price:.2f}\n"
+
+            # Add market conditions
+            message += "\n📈 Market Conditions:\n"
+            for symbol in self.trading_pairs:
+                try:
+                    volume_24h = float(self.client.get_ticker(symbol=symbol)['volume'])
+                    price_change = float(self.client.get_ticker(symbol=symbol)['priceChangePercent'])
+                    message += f"{symbol}:\n"
+                    message += f"24h Volume: ${volume_24h:.2f}\n"
+                    message += f"24h Change: {price_change:+.2f}%\n"
+                except Exception as e:
+                    self.logger.error(f"Error getting market data for {symbol}: {e}")
+
+            send_telegram_message(message)
+
+        except Exception as e:
+            self.logger.error(f"Error sending status update: {e}")
+
+def status_monitor(bot):
+    """Monitor and report bot status"""
+    while bot.thread_status['status_thread']:
+        try:
+            bot.send_status_update()
+            time.sleep(60)  # Update every minute
+        except Exception as e:
+            bot.logger.error(f"Error in status monitor: {e}")
+            time.sleep(5)  # Short delay on error
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Trading Bot Runner")
