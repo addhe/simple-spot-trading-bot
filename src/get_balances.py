@@ -1,6 +1,5 @@
 import os
 import time
-import logging
 import sqlite3
 import threading
 import math
@@ -11,6 +10,7 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 
 from config.settings import API_KEY, API_SECRET, BASE_URL
+from src.logger import logger
 
 # Inisialisasi klien Binance
 client = Client(api_key=API_KEY, api_secret=API_SECRET)
@@ -39,5 +39,5 @@ def get_balances():
                 }
         return balances
     except BinanceAPIException as e:
-        logging.error(f"Failed to get balances: {e}")
+        logger.error(f"Failed to get balances: {e}")
         return {}

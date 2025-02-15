@@ -1,9 +1,9 @@
 import os
 import time
-import logging
 import sqlite3
 from datetime import datetime, timedelta
 from src._validate_kline_data import _validate_kline_data
+from src.logger import logger
 
 def save_historical_data(symbol, klines):
     """Enhanced historical data saving with data validation"""
@@ -35,7 +35,7 @@ def save_historical_data(symbol, klines):
 
         conn.commit()
         conn.close()
-        logging.info(f"Saved {len(validated_klines)} validated historical data points for {symbol}")
+        logger.info(f"Saved {len(validated_klines)} validated historical data points for {symbol}")
 
     except sqlite3.Error as e:
-        logging.error(f"Failed to save historical data: {e}")
+        logger.error(f"Failed to save historical data: {e}")

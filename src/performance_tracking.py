@@ -1,5 +1,6 @@
 import logging
 from src.get_balances import get_balances
+from src.logger import logger
 
 
 def initialize_performance_tracking(db_path):
@@ -18,9 +19,9 @@ def initialize_performance_tracking(db_path):
                     if price:
                         total_value += asset_balance * price
 
-            logging.info(f"Initial portfolio value: {total_value} USDT")
+            logger.info(f"Initial portfolio value: {total_value} USDT")
     except Exception as e:
-        logging.error(f"Error initializing performance tracking: {e}")
+        logger.error(f"Error initializing performance tracking: {e}")
 
 
 def update_performance_metrics(trade_type, entry_price, exit_price, quantity):

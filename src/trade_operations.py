@@ -1,6 +1,7 @@
 from binance.exceptions import BinanceAPIException
 from src.get_balances import get_balances
 from src.save_transaction import save_transaction
+from src.logger import logger
 
 
 def buy_asset(client, symbol, quantity):
@@ -26,7 +27,7 @@ def buy_asset(client, symbol, quantity):
         )
 
         # Log successful transaction
-        logging.info(f"✅ Buy order successful for {symbol}: Quantity: {quantity}, Price: {get_last_price(symbol)}, Total Value: {order_value} USDT")
+        logger.info(f"✅ Buy order successful for {symbol}: Quantity: {quantity}, Price: {get_last_price(symbol)}, Total Value: {order_value} USDT")
 
         # Save transaction details
         save_transaction(symbol, 'BUY', quantity, get_last_price(symbol), order_value)
@@ -34,10 +35,10 @@ def buy_asset(client, symbol, quantity):
         return order
 
     except BinanceAPIException as e:
-        logging.error(f"Binance API Exception during buy: {e}")
+        logger.error(f"Binance API Exception during buy: {e}")
         raise
     except Exception as e:
-        logging.error(f"Unexpected error during buy: {e}")
+        logger.error(f"Unexpected error during buy: {e}")
         raise
 
 
@@ -49,5 +50,5 @@ def sell_asset(client, symbol, quantity):
         # Similar implementation as buy_asset, but for selling
         pass
     except Exception as e:
-        logging.error(f"Unexpected error during sell: {e}")
+        logger.error(f"Unexpected error during sell: {e}")
         raise

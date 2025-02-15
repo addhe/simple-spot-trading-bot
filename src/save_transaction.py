@@ -1,6 +1,6 @@
-import logging
 import sqlite3
 from src.get_db_connection import get_db_connection
+from src.logger import logger
 
 def save_transaction(symbol, type, quantity, price):
     try:
@@ -12,6 +12,6 @@ def save_transaction(symbol, type, quantity, price):
         ''', (symbol, type, quantity, price))
         conn.commit()
         conn.close()
-        logging.info(f"Transaksi {type} {quantity} {symbol} pada harga {price} disimpan ke database")
+        logger.info(f"Transaksi {type} {quantity} {symbol} pada harga {price} disimpan ke database")
     except sqlite3.Error as e:
-        logging.error(f"Gagal menyimpan transaksi ke database: {e}")
+        logger.error(f"Gagal menyimpan transaksi ke database: {e}")
