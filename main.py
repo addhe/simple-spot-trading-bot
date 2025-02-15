@@ -29,7 +29,8 @@ from config.settings import (
     MIN_24H_VOLUME,
     MARKET_VOLATILITY_LIMIT,
     TRAILING_STOP,
-    TAKE_PROFIT
+    TAKE_PROFIT,
+    MIN_TRADE_AMOUNT
 )
 
 from src.logger import logger
@@ -60,12 +61,12 @@ class TradingBot:
 
         # Initialize trading pairs and parameters
         self.trading_pairs = list(SYMBOL_CONFIG.keys())
-        self.min_trade_amounts = MIN_TRADE_AMOUNT
+        self.min_trade_amount = MIN_TRADE_AMOUNT
         self.min_24h_volumes = MIN_24H_VOLUME
         self.buy_multiplier = BUY_MULTIPLIER
         self.sell_multiplier = SELL_MULTIPLIER
-        self.trailing_stops = TRAILING_STOP
-        self.take_profits = TAKE_PROFIT
+        self.trailing_stop = TRAILING_STOP
+        self.take_profit = TAKE_PROFIT
 
         # Initialize database and calculate initial value
         self.db_manager.setup_tables()

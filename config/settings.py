@@ -115,15 +115,15 @@ MAX_API_RETRIES = 5                # Increase retries
 ERROR_SLEEP_TIME = 10              # Increase sleep time
 RETRY_MULTIPLIER = 2               # Exponential backoff multiplier
 
-# Performance Tracking
-WIN_RATE_THRESHOLD = 0.55          # Minimum win rate to continue trading
-PROFIT_FACTOR_THRESHOLD = 1.5      # Minimum profit factor to continue trading
+# Performance Tracking and Monitoring
+WIN_RATE_THRESHOLD = 0.50          # Minimum win rate to continue trading
+PROFIT_FACTOR_THRESHOLD = 1.2      # Minimum profit factor to continue trading
+DETAILED_LOGGING = True            # Enable detailed logging
 
 # Logging Configuration
 LOG_LEVEL = 'INFO'
-MAX_LOG_SIZE = 20 * 1024 * 1024    # Increase ke 20MB
-LOG_BACKUP_COUNT = 10              # Increase backup files
-DETAILED_LOGGING = True            # Enable detailed logging
+LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
+LOG_BACKUP_COUNT = 10              # Number of backup files to keep
 
 # Volume Filters
 VOLUME_MA_PERIOD = 24              # 24 periods for volume moving average
