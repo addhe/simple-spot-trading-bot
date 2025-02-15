@@ -710,6 +710,20 @@ class TradingBot:
         normalized_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
         return normalized_symbol in [s[:-4] if s.endswith('USDT') else s for s in self.trading_pairs]
 
+    def get_24h_volume(self, symbol):
+        """
+        Fetch the 24-hour trading volume for a given symbol.
+        """
+        try:
+            ticker = self.client.get_ticker(symbol=symbol)
+            return float(ticker['volume'])
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API error getting 24h volume for {symbol}: {e}")
+            return 0
+        except Exception as e:
+            self.logger.error(f"Unexpected error getting 24h volume for {symbol}: {e}")
+            return 0
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Trading Bot Runner")
