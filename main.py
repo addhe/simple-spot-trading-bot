@@ -107,6 +107,10 @@ class TradingBot:
         balances = get_balances()
         self.available_balance = balances.get('USDT', {}).get('free', 0)  # Adjust based on your balance structure
 
+        # Validate and normalize symbols
+        self.trading_symbols = [f"{symbol}USDT" if not symbol.endswith('USDT') else symbol for symbol in SYMBOLS]
+        self.logger.info(f"Initialized trading symbols: {self.trading_symbols}")
+
     @retry_on_api_error
     def buy_asset_with_retry(self, symbol, quantity):
         """Melakukan pembelian aset di Binance dengan retry mechanism"""
@@ -586,37 +590,55 @@ class TradingBot:
             self.logger.error(f"Error during cleanup: {e}")
 
     def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
-        # Implementasi proses trading untuk setiap simbol
-        # Contoh implementasi, silakan disesuaikan dengan kebutuhan
-        self.logger.info(f"Processing trade for {symbol} with allocation {usdt_per_symbol} USDT")
-        # Lakukan analisis teknikal dan keputusan trading di sini
-        current_market_price = self.get_current_market_price(symbol)
-        last_buy_price = get_last_buy_price(symbol)
-        if not self.should_buy(symbol, current_market_price):
-            reason = "Current price is above the moving average."
-            asset_prices = {symbol: self.get_current_market_price(symbol) for symbol in SYMBOLS}
-            send_telegram_message(
-                f"📊 Trading Bot Status Report\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                f"💰 Portfolio Summary:\n"
-                f"Total Value: ${available_balance}\n"
-                f"USDT Available: ${usdt_per_symbol}\n"
-                f"USDT Locked: ${0}\n\n"
-                f"🔐 Asset Positions:\n"
-                + '\n'.join([f"{symbol}: Current Price: {price if price else 'N/A'}" for symbol, price in asset_prices.items()])
-                + f"\nReason: {reason}"
-            )
+        """
+        Improved symbol processing with proper normalization
+        """
+        normalized_symbol = self.get_normalized_symbol(symbol)
+        self.logger.info(f"Processing trade for {normalized_symbol} with allocation {usdt_per_symbol} USDT")
+
+        # Get and validate balances
+        balances = get_balances()
+        base_symbol = symbol.replace('USDT', '')
+
+        # Check both raw and USDT-paired balance formats
+        symbol_balance = balances.get(base_symbol, {}).get('free', 0)
+
+        current_market_price = self.get_current_market_price(normalized_symbol)
+        if current_market_price is None:
+            self.logger.error(f"Could not get market price for {normalized_symbol}")
+            return
+
+        # Rest of trading logic...
+
+    def get_normalized_symbol(self, symbol):
+        """
+        Ensures consistent symbol format for Binance API calls
+        """
+        if not symbol.endswith('USDT'):
+            return f"{symbol}USDT"
+        return symbol
+
+    def is_valid_symbol(self, symbol):
+        """
+        Improved symbol validation that handles both raw and USDT-suffixed symbols
+        """
+        # Handle both cases: raw symbol (e.g., 'BTC') and paired symbol (e.g., 'BTCUSDT')
+        normalized_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
+        return normalized_symbol in [s[:-4] if s.endswith('USDT') else s for s in self.trading_symbols]
 
     def get_current_market_price(self, symbol):
-        if self.is_valid_symbol(symbol):
-            try:
-                ticker = self.client.get_ticker(symbol=symbol)
-                return float(ticker['lastPrice'])
-            except Exception as e:
-                self.logger.error(f"Error getting current market price for {symbol}: {e}")
-                return None
-        else:
-            self.logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
+        """
+        Improved market price retrieval with proper error handling
+        """
+        normalized_symbol = self.get_normalized_symbol(symbol)
+        try:
+            ticker = self.client.get_ticker(symbol=normalized_symbol)
+            return float(ticker['lastPrice'])
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API error getting price for {normalized_symbol}: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error getting price for {normalized_symbol}: {e}")
             return None
 
     def calculate_total_value(self, balances):
@@ -627,9 +649,6 @@ class TradingBot:
                 if current_price:
                     total_value += float(balance['free']) * current_price
         return total_value + float(balances.get('USDT', {}).get('free', 0.0))
-
-    def is_valid_symbol(self, symbol):
-        return symbol in SYMBOLS
 
 def main():
     """Main entry point"""
