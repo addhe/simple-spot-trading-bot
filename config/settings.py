@@ -13,9 +13,9 @@ TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID_PROD', '')
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
 # Portfolio Management
-MAX_INVESTMENT_PER_TRADE = 1.00     # 100% max investment per trade (adjusted from 25%)
+MAX_INVESTMENT_PER_TRADE = 10.00     # Increased max investment per trade
 PORTFOLIO_STOP_LOSS = 0.15          # Stop trading if portfolio drops 15%
-DAILY_LOSS_LIMIT = 0.07             # Stop trading if daily loss reaches 7%
+DAILY_LOSS_LIMIT = -0.03             # Stop trading if daily loss reaches 3%
 
 # Position Management
 STOP_LOSS_PERCENTAGE = 0.03         # 3% stop loss for quicker cut loss
@@ -35,7 +35,7 @@ TAKE_PROFIT = {                     # Take profit targets
 BUY_MULTIPLIER = 0.98              # 5% below market for better entry
 SELL_MULTIPLIER = 1.01             # 2% above market for better profit
 TOLERANCE = 0.02                   # Reduced for more precision
-MIN_VOLUME_MULTIPLIER = 1.0        # Minimum volume must be 1.1x average
+MIN_VOLUME_MULTIPLIER = 1.1        # Minimum volume must be 1.1x average
 
 # Time Intervals
 INTERVAL = '15m'                    # 15-minute timeframe to reduce noise
