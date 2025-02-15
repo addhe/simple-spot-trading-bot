@@ -652,9 +652,17 @@ class TradingBot:
         base_symbol = symbol[:-4]  # Remove USDT suffix
         balances = get_balances()
 
-        current_price = self.get_current_market_price(symbol)
+        # Retry mechanism for getting current price
+        current_price = None
+        for attempt in range(3):  # Retry up to 3 times
+            current_price = self.get_current_market_price(symbol)
+            if current_price:
+                break
+            self.logger.warning(f"Attempt {attempt + 1}: Could not get current price for {symbol}, retrying...")
+            time.sleep(1)  # Wait before retrying
+
         if not current_price:
-            self.logger.error(f"Could not get current price for {symbol}")
+            self.logger.error(f"Failed to retrieve current price for {symbol} after 3 attempts.")
             return
 
         # Calculate potential quantity based on available USDT
