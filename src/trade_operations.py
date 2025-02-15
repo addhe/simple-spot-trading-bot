@@ -3,6 +3,7 @@ from binance.client import Client
 from src.get_balances import get_balances
 from src.save_transaction import save_transaction
 from src.logger import logger
+from .get_last_price import get_last_price
 
 
 def buy_asset(client, symbol, quantity):

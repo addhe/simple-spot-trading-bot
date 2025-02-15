@@ -2,6 +2,7 @@ import logging
 from src.get_balances import get_balances
 from src.logger import logger
 from config.settings import SYMBOLS
+from .get_last_price import get_last_price
 
 
 def initialize_performance_tracking(db_path):
