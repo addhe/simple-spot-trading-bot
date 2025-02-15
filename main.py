@@ -7,13 +7,13 @@ import threading
 import sqlite3
 import argparse
 import logging
+from datetime import datetime, timedelta
+from logging.handlers import RotatingFileHandler
 import numpy as np
 import pandas as pd
 import functools
 import requests
 
-from datetime import datetime, timedelta
-from logging.handlers import RotatingFileHandler
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -77,11 +77,14 @@ try:
 except ImportError:
     STOP_LOSS_PERCENTAGE = 0.02  # contoh: 2%
 
+# Setup logging at the start of the main file
+logger = setup_logging()
+
 class TradingBot:
     def __init__(self):
         # Pastikan db_path sudah didefinisikan sebelum dipakai fungsi lain
         self.db_path = 'table_transactions.db'
-        self.logger = setup_logging()
+        self.logger = logger
         self.initialize_state()
         self.initialize_client()
         self.setup_database()
@@ -648,7 +651,7 @@ def main():
         else:
             bot.run()
     except Exception as e:
-        logging.critical(f"Failed to start trading bot: {e}")
+        logger.critical(f"Failed to start trading bot: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

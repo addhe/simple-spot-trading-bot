@@ -3,6 +3,7 @@ from src.get_balances import get_balances
 from src.save_transaction import save_transaction
 from src.send_telegram_message import send_telegram_message
 from datetime import datetime
+from main import logger
 
 
 def get_24h_stats(symbol):
@@ -22,7 +23,7 @@ def get_last_price(symbol):
 
 def process_symbol_trade(self, symbol):
     """Process trading logic for a symbol with error handling."""
-    self.logger.info(f"Starting trade processing for {symbol}")  # Log entry into the method
+    logger.info(f"Starting trade processing for {symbol}")  # Log entry into the method
     try:
         market_stats = self.get_market_stats(symbol)
         if not market_stats:
@@ -33,22 +34,22 @@ def process_symbol_trade(self, symbol):
         moving_average = self.get_moving_average(symbol)
 
         # Log current price and moving average
-        self.logger.info(f"Current Price: {current_price}, Moving Average: {moving_average}")
+        logger.info(f"Current Price: {current_price}, Moving Average: {moving_average}")
 
         if volume_24h < MIN_24H_VOLUME:
-            self.logger.info(
+            logger.info(
                 f"24h volume too low for {symbol}: {volume_24h}"
             )
             return
 
         # Log before fetching available USDT
-        self.logger.info("Fetching available USDT...")
+        logger.info("Fetching available USDT...")
         available_usdt = self.get_available_usdt()  # Fetch available USDT
-        self.logger.info(f"Available USDT: {available_usdt}")  # Log the available USDT
+        logger.info(f"Available USDT: {available_usdt}")  # Log the available USDT
 
         if self.should_buy(symbol, current_price):
             # Log the decision to buy
-            self.logger.info(f"Buying {symbol} at {current_price}")
+            logger.info(f"Buying {symbol} at {current_price}")
             quantity = self.calculate_position_size(
                 available_usdt,
                 current_price
@@ -56,7 +57,7 @@ def process_symbol_trade(self, symbol):
             if quantity:
                 order = self.buy_asset_with_retry(symbol, quantity)
                 if order:
-                    self.logger.info(
+                    logger.info(
                         f"Successfully bought {quantity} {symbol} at "
                         f"{current_price}"
                     )
@@ -64,12 +65,12 @@ def process_symbol_trade(self, symbol):
                         f"🟢 Bought {quantity} {symbol} at {current_price} USDT"
                     )
                 else:
-                    self.logger.error(f"Failed to buy {symbol} at {current_price}")
+                    logger.error(f"Failed to buy {symbol} at {current_price}")
                     self.send_telegram_message(
                         f"❌ Failed to buy {symbol} at {current_price}"
                     )
         else:
-            self.logger.info(f"Conditions not favorable for buying {symbol}: "
+            logger.info(f"Conditions not favorable for buying {symbol}: "
                              f"Current price {current_price} is above the moving average.")
 
         balances = get_balances()
@@ -79,13 +80,13 @@ def process_symbol_trade(self, symbol):
             last_buy_price = get_last_buy_price(symbol)
             if last_buy_price:
                 price_change = (current_price - last_buy_price) / last_buy_price
-                self.logger.info(f"Price Change for {symbol}: {price_change * 100:.2f}%")
+                logger.info(f"Price Change for {symbol}: {price_change * 100:.2f}%")
                 if price_change >= SELL_THRESHOLD_PERCENTAGE:
                     # Log the decision to sell
-                    self.logger.info(f"Selling {symbol} at {current_price}")
+                    logger.info(f"Selling {symbol} at {current_price}")
                     sell_order = self.sell_asset(symbol, asset_balance)
                     if sell_order:
-                        self.logger.info(
+                        logger.info(
                             f"Successfully sold {asset_balance} {symbol} at "
                             f"{current_price}"
                         )
@@ -93,38 +94,38 @@ def process_symbol_trade(self, symbol):
                             f"🔴 Sold {asset_balance} {symbol} at {current_price} USDT"
                         )
                     else:
-                        self.logger.error(f"Failed to sell {symbol} at {current_price}")
+                        logger.error(f"Failed to sell {symbol} at {current_price}")
                         self.send_telegram_message(
                             f"❌ Failed to sell {symbol} at {current_price}"
                         )
 
     except Exception as e:
-        self.logger.error(f"Error processing {symbol}: {e}")
+        logger.error(f"Error processing {symbol}: {e}")
         self.handle_symbol_error(symbol, e)
 
 
 def get_available_usdt(self):
     """Fetch the available USDT from the Binance account."""
-    self.logger.info("Attempting to fetch available USDT...")  # Log when fetching starts
+    logger.info("Attempting to fetch available USDT...")  # Log when fetching starts
     try:
         balances = self.client.get_asset_balance(asset='USDT')
         available_balance = float(balances['free'])
-        self.logger.info(f"Fetched USDT Balance: {available_balance}")  # Log fetched balance
+        logger.info(f"Fetched USDT Balance: {available_balance}")  # Log fetched balance
         return available_balance
     except Exception as e:
-        self.logger.error(f"Error fetching USDT balance: {e}")
+        logger.error(f"Error fetching USDT balance: {e}")
         return 0.0
 
 
 def should_buy(self, symbol, current_price):
     """Determine if the bot should buy the asset."""
     moving_average = self.get_moving_average(symbol)
-    self.logger.info(f"Current Price: {current_price}, Moving Average: {moving_average}")
+    logger.info(f"Current Price: {current_price}, Moving Average: {moving_average}")
 
     # Buy if current price is significantly below moving average (1% buffer)
     if current_price < moving_average * 0.99:  # Allow for a 1% buffer
         return True
     else:
-        self.logger.info(f"Conditions not favorable for buying {symbol}: "
+        logger.info(f"Conditions not favorable for buying {symbol}: "
                          f"Current price {current_price} is above the moving average.")
         return False
