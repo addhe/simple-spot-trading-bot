@@ -62,12 +62,16 @@ def buy_asset(client, symbol, quantity):
     """
     Perform a market buy of the specified asset on Binance.
     """
+    logger.info(f"Processing trade for {symbol}")
     try:
         # Check internet connection
         if not _check_internet_connection():
             raise ConnectionError("No internet connection available")
 
         current_price = get_last_price(symbol)
+        if current_price is None:
+            logger.error(f"Invalid symbol: {symbol}")
+            return
         prices.append(current_price)  # Add current price to the deque
 
         if should_buy():
@@ -116,7 +120,11 @@ def convert_asset_to_usdt(client, symbol, quantity):
 
 
 def sell_asset(client, symbol, buy_price, quantity):
+    logger.info(f"Processing trade for {symbol}")
     current_price = get_last_price(symbol)
+    if current_price is None:
+        logger.error(f"Invalid symbol: {symbol}")
+        return
     prices.append(current_price)  # Add current price to the deque
 
     if should_sell():
