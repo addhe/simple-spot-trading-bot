@@ -25,10 +25,19 @@ TRAILING_STOP = {                   # Custom trailing stop per pair
     'ETHUSDT': 0.02,                # ETH moderate volatility, 2%
     'SOLUSDT': 0.03                 # SOL more volatile, 3%
 }
-TAKE_PROFIT = {                     # Take profit targets
-    'BTCUSDT': 1.02,                # 2% profit for BTC
-    'ETHUSDT': 1.025,               # 2.5% profit for ETH
-    'SOLUSDT': 1.05                 # 5% profit for SOL
+
+# Take Profit and Stop Loss Settings
+TAKE_PROFIT = {
+    'BTCUSDT': 1.02,  # 2% profit target
+    'ETHUSDT': 1.02,
+    'SOLUSDT': 1.02
+}
+
+# Market Volatility Settings
+MARKET_VOLATILITY_LIMIT = {
+    'BTCUSDT': 0.20,  # 20% volatility limit
+    'ETHUSDT': 0.20,
+    'SOLUSDT': 0.20
 }
 
 # Entry Strategy Parameters
@@ -65,7 +74,6 @@ BB_STD = 2
 MAX_POSITIONS = 3                   # Maximum concurrent positions
 MIN_USDT_BALANCE = 50               # Minimum USDT to maintain (adjusted from 100)
 MIN_USD_BALANCE = 1.00              # Minimum USD balance required for trading
-MARKET_VOLATILITY_LIMIT = 0.20     # Increase market volatility limit to 20%
 
 # Rate Limiting
 RATE_LIMIT_PER_MINUTE = 1200        # Binance limit

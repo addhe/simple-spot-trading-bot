@@ -675,9 +675,12 @@ class TradingBot:
         # Continue with trading logic based on configuration parameters
         if self.should_buy(symbol, current_price):
             try:
-                # Use configured stop loss and take profit
-                stop_loss = current_price * (1 - STOP_LOSS_PERCENTAGE)
-                take_profit = current_price * self.take_profits.get(symbol, 1.02)
+                # Get configured take profit and stop loss values
+                take_profit_multiplier = self.take_profits.get(symbol, 1.02)  # Default 2% profit
+                stop_loss_multiplier = 1 - STOP_LOSS_PERCENTAGE
+
+                stop_loss = current_price * stop_loss_multiplier
+                take_profit = current_price * take_profit_multiplier
 
                 order = self.buy_asset_with_retry(symbol, potential_quantity)
                 if order:
@@ -685,6 +688,8 @@ class TradingBot:
                     self.update_position_tracking(symbol, 'BUY', potential_quantity, current_price)
             except Exception as e:
                 self.logger.error(f"Error executing buy order for {symbol}: {e}")
+                # Handle error and potentially disable trading for this symbol
+                self.handle_symbol_error(symbol, e)
 
     def get_current_market_price(self, symbol):
         """
