@@ -427,6 +427,7 @@ class TradingBot:
                     continue
 
                 balances = get_balances()
+                self.logger.info(f"Balances fetched: {balances}")
                 if not balances:
                     self.logger.warning("Could not fetch balances, skipping trade cycle")
                     time.sleep(error_sleep)
