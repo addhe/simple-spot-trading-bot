@@ -630,11 +630,15 @@ class TradingBot:
             )
 
     def get_current_market_price(self, symbol):
-        try:
-            ticker = self.client.get_ticker(symbol=symbol)
-            return float(ticker['lastPrice'])
-        except Exception as e:
-            self.logger.error(f"Error getting current market price for {symbol}: {e}")
+        if self.is_valid_symbol(symbol):
+            try:
+                ticker = self.client.get_ticker(symbol=symbol)
+                return float(ticker['lastPrice'])
+            except Exception as e:
+                self.logger.error(f"Error getting current market price for {symbol}: {e}")
+                return None
+        else:
+            self.logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
             return None
 
     def calculate_total_value(self, balances):
