@@ -1,24 +1,55 @@
 #!/bin/bash
 
-# Nama proses bot
+# Configuration
 BOT_NAME="crypto_bot"
-
-# Direktori tempat skrip main.py berada
-SCRIPT_DIR="/root/simple-spot-trading-bot"
-
-# Baca PID dari file
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$SCRIPT_DIR/$BOT_NAME.pid"
 
-if [ -f "$PID_FILE" ]; then
-    PID=$(cat "$PID_FILE")
-    if ps -p $PID > /dev/null; then
-        kill $PID
-        echo "Bot $BOT_NAME with PID $PID stopped"
-        rm "$PID_FILE"
+# Function to check if a process exists
+check_process() {
+    ps -p $1 > /dev/null 2>&1
+}
+
+# Check if PID file exists
+if [ ! -f "$PID_FILE" ]; then
+    echo "Bot is not running (no PID file found)"
+    exit 0
+fi
+
+# Read PID from file
+PID=$(cat "$PID_FILE")
+
+# Check if process is running
+if check_process $PID; then
+    echo "Stopping bot with PID $PID..."
+
+    # Try graceful shutdown first
+    kill -TERM $PID
+
+    # Wait for up to 10 seconds for graceful shutdown
+    for i in {1..10}; do
+        if ! check_process $PID; then
+            echo "Bot stopped successfully"
+            rm -f "$PID_FILE"
+            exit 0
+        fi
+        sleep 1
+    done
+
+    # Force kill if still running
+    echo "Bot did not stop gracefully, forcing shutdown..."
+    kill -9 $PID
+
+    # Final check
+    if ! check_process $PID; then
+        echo "Bot was forcefully stopped"
     else
-        echo "Bot $BOT_NAME with PID $PID is not running"
-        rm "$PID_FILE"
+        echo "Failed to stop bot"
+        exit 1
     fi
 else
-    echo "Bot $BOT_NAME is not running"
+    echo "Bot is not running (PID $PID not found)"
 fi
+
+# Clean up PID file
+rm -f "$PID_FILE"

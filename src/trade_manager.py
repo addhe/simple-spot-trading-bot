@@ -1,6 +1,7 @@
 from src.logger import logger
 from src.get_balances import get_balances
 from config.settings import TAKE_PROFIT, TRAILING_STOP
+import pandas as pd
 
 class TradeManager:
     def __init__(self, db_manager, client):
@@ -8,8 +9,111 @@ class TradeManager:
         self.client = client
         self.logger = logger
 
+    def should_buy(self, symbol, current_price):
+        """Determine whether to buy based on technical analysis"""
+        try:
+            query = """
+                SELECT timestamp, close_price, volume
+                FROM historical_data
+                WHERE symbol = ?
+                ORDER BY timestamp DESC
+                LIMIT 500
+            """
+            cursor = self.db_manager.execute_query(query, (symbol,))
+            rows = cursor.fetchall()
+
+            if len(rows) < 50:
+                self.logger.debug(f"{symbol}: Not enough historical data for analysis (only {len(rows)} records)")
+                return False
+
+            # Convert to DataFrame
+            df = pd.DataFrame(rows, columns=['timestamp', 'close_price', 'volume'])
+
+            # Calculate basic indicators
+            df['MA_50'] = df['close_price'].rolling(window=50).mean()
+            df['MA_200'] = df['close_price'].rolling(window=200).mean()
+            df['RSI'] = self._calculate_rsi(df['close_price'])
+
+            # Calculate Bollinger Bands
+            df['BB_upper'], df['BB_middle'], df['BB_lower'] = self._calculate_bollinger_bands(df['close_price'])
+
+            # Calculate MACD
+            df['MACD'], df['MACD_signal'] = self._calculate_macd(df['close_price'])
+            df['MACD_hist'] = df['MACD'] - df['MACD_signal']
+
+            latest = df.iloc[0]  # Most recent data point
+
+            # Log the indicator values for debugging
+            self.logger.info(f"Latest indicators for {symbol} - MA_50: {latest['MA_50']}, MA_200: {latest['MA_200']}, RSI: {latest['RSI']}, BB_lower: {latest['BB_lower']}")
+
+            # Decision logic for buying
+            if latest['close_price'] < latest['BB_lower'] and latest['RSI'] < 30:
+                return True  # Conditions for buying are met
+
+            return False  # Conditions not met
+
+        except Exception as e:
+            self.logger.error(f"Error in should_buy for {symbol}: {e}")
+            return False
+
+    def process_trade(self, symbol, current_price, position_size=None):
+        """Process a single trade with take profit and trailing stop"""
+        try:
+            # Get last buy price from database
+            last_buy = self.db_manager.get_last_buy_price(symbol)
+
+            # If we have a position
+            if position_size and last_buy:
+                # Update highest price if needed
+                highest_price = self.db_manager.get_highest_price(symbol)
+                if current_price > highest_price:
+                    self.db_manager.update_highest_price(symbol, current_price)
+                    highest_price = current_price
+
+                # Check take profit
+                if self.check_take_profit(symbol, current_price, last_buy):
+                    return "SELL"
+
+                # Check trailing stop
+                if self.check_trailing_stop(symbol, current_price, highest_price):
+                    return "SELL"
+
+            # No position, check if we should buy
+            elif not position_size and self.should_buy(symbol, current_price):
+                return "BUY"
+
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Error processing trade for {symbol}: {e}")
+            return None
+
+    def _calculate_rsi(self, prices, period=14):
+        """Calculate RSI indicator"""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+
+    def _calculate_bollinger_bands(self, prices, window=20, num_std=2):
+        """Calculate Bollinger Bands"""
+        rolling_mean = prices.rolling(window=window).mean()
+        rolling_std = prices.rolling(window=window).std()
+        upper_band = rolling_mean + (rolling_std * num_std)
+        lower_band = rolling_mean - (rolling_std * num_std)
+        return upper_band, rolling_mean, lower_band
+
+    def _calculate_macd(self, prices, fast=12, slow=26, signal=9):
+        """Calculate MACD"""
+        exp1 = prices.ewm(span=fast, adjust=False).mean()
+        exp2 = prices.ewm(span=slow, adjust=False).mean()
+        macd = exp1 - exp2
+        signal_line = macd.ewm(span=signal, adjust=False).mean()
+        return macd, signal_line
+
     def check_take_profit(self, symbol, current_price, buy_price):
-        """Check if we should take profit based on current price and buy price"""
+        """Check if we should take profit"""
         if not buy_price:
             return False
 
@@ -23,7 +127,7 @@ class TradeManager:
         return False
 
     def check_trailing_stop(self, symbol, current_price, highest_price):
-        """Check if trailing stop loss is triggered"""
+        """Check if trailing stop is triggered"""
         if not highest_price:
             return False
 
@@ -35,32 +139,6 @@ class TradeManager:
             return True
 
         return False
-
-    def process_trade(self, symbol, current_price, position_size=None):
-        """Process a single trade with take profit and trailing stop"""
-        try:
-            # Get last buy price from database
-            last_buy = self.db_manager.get_last_buy_price(symbol)
-
-            # If we have a position
-            if position_size:
-                # Update highest price if needed
-                highest_price = self.db_manager.get_highest_price(symbol)
-                if current_price > highest_price:
-                    self.db_manager.update_highest_price(symbol, current_price)
-
-                # Check take profit and trailing stop
-                should_take_profit = self.check_take_profit(symbol, current_price, last_buy)
-                should_trail_stop = self.check_trailing_stop(symbol, current_price, highest_price)
-
-                if should_take_profit or should_trail_stop:
-                    return 'SELL', position_size
-
-            return None, None
-
-        except Exception as e:
-            self.logger.error(f"Error processing trade for {symbol}: {e}")
-            return None, None
 
     def execute_sell(self, symbol, quantity):
         """Execute a sell order"""

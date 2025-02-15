@@ -1,14 +1,16 @@
-def _calculate_rsi(prices, periods=14):
-    """Calculate Relative Strength Index"""
+import pandas as pd
+
+def calculate_rsi(prices, period=14):
+    """Calculate RSI (Relative Strength Index) for a series of prices"""
+    # Calculate price changes
     delta = prices.diff()
 
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
+    # Separate gains and losses
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
 
-    avg_gain = gain.rolling(window=periods).mean()
-    avg_loss = loss.rolling(window=periods).mean()
-
-    relative_strength = avg_gain / avg_loss
-    rsi = 100.0 - (100.0 / (1.0 + relative_strength))
+    # Calculate RS and RSI
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
 
     return rsi
