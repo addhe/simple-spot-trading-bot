@@ -46,6 +46,8 @@ def process_symbol_trade(self, symbol):
         self.logger.info(f"Available USDT: {available_usdt}")  # Log the available USDT
 
         if self.should_buy(symbol, current_price):
+            # Log the decision to buy
+            self.logger.info(f"Buying {symbol} at {current_price}")
             quantity = self.calculate_position_size(
                 available_usdt,
                 current_price
@@ -65,6 +67,9 @@ def process_symbol_trade(self, symbol):
                     self.send_telegram_message(
                         f"❌ Failed to buy {symbol} at {current_price}"
                     )
+        else:
+            self.logger.info(f"Conditions not favorable for buying {symbol}: "
+                             f"Current price {current_price} is above the moving average.")
 
         balances = get_balances()
         asset_balance = float(balances.get(symbol.replace('USDT', ''), {}).get('free', 0.0))
@@ -73,7 +78,10 @@ def process_symbol_trade(self, symbol):
             last_buy_price = get_last_buy_price(symbol)
             if last_buy_price:
                 price_change = (current_price - last_buy_price) / last_buy_price
+                self.logger.info(f"Price Change for {symbol}: {price_change * 100:.2f}%")
                 if price_change >= SELL_THRESHOLD_PERCENTAGE:
+                    # Log the decision to sell
+                    self.logger.info(f"Selling {symbol} at {current_price}")
                     sell_order = self.sell_asset(symbol, asset_balance)
                     if sell_order:
                         self.logger.info(
