@@ -449,6 +449,21 @@ class TradingBot:
                     time.sleep(CACHE_LIFETIME)
                     continue
 
+                message = "📊 Trading Bot Status Report\n"
+                message += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                message += "💰 Portfolio Summary:\n"
+                message += f"Total Value: ${self.calculate_total_value(balances)}\n"
+                message += f"USDT Available: {balances.get('USDT', {}).get('free', 0)}\n\n"
+                message += "🔐 Asset Positions:\n"
+
+                for symbol in SYMBOLS:
+                    if symbol in balances:
+                        free_balance = balances[symbol]['free']
+                        current_price = self.get_current_market_price(symbol)
+                        message += f"{symbol}: Current Price: {current_price}, Balance: {free_balance}\n"
+
+                send_telegram_message(message)
+
                 for symbol in active_symbols:
                     try:
                         self.process_symbol_trade(symbol, usdt_per_symbol, self.available_balance)
@@ -615,6 +630,15 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error getting current market price for {symbol}: {e}")
             return None
+
+    def calculate_total_value(self, balances):
+        total_value = 0
+        for symbol, balance in balances.items():
+            if symbol != 'USDT':
+                current_price = self.get_current_market_price(symbol)
+                if current_price:
+                    total_value += float(balance['free']) * current_price
+        return total_value + float(balances.get('USDT', {}).get('free', 0.0))
 
 def main():
     """Main entry point"""
