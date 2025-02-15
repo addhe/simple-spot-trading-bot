@@ -9,6 +9,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
+import argparse
+import requests
+import sys
 
 from config.settings import (
     API_KEY,
@@ -439,26 +442,85 @@ class TradingBot:
                 send_telegram_message("⚠️ Warning: System degraded - check application status")
             time.sleep(600)
 
+    def send_status_update(self):
+        """Send status update via Telegram"""
+        try:
+            balances = get_balances()
+            if not balances:
+                self.logger.error("Failed to fetch balances")
+                return
+
+            total_value = self.calculate_total_value(balances)
+
+            # Format timestamp
+            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Create message header
+            message = f"📊 Trading Bot Status Report\n"
+            message += f"⏰ {timestamp} UTC\n\n"
+
+            # Add portfolio summary
+            message += "💰 Portfolio Summary:\n"
+            message += f"Total Value: ${total_value:.2f}\n"
+            usdt_balance = balances.get('USDT', {}).get('free', 0)
+            message += f"USDT Available: ${usdt_balance:.2f}\n"
+            message += f"USDT Locked: ${balances.get('USDT', {}).get('locked', 0):.2f}\n\n"
+
+            # Add asset positions
+            message += "🔐 Asset Positions:\n"
+            for symbol in self.trading_pairs:
+                base_asset, _ = self.get_symbol_info(symbol)
+                if base_asset in balances:
+                    free_balance = float(balances[base_asset].get('free', 0))
+                    locked_balance = float(balances[base_asset].get('locked', 0))
+                    if free_balance > 0 or locked_balance > 0:
+                        # Get current price
+                        current_price = self.get_current_market_price(symbol)
+                        if current_price:
+                            value_usdt = (free_balance + locked_balance) * current_price
+                            message += f"{base_asset}: {free_balance:.8f}"
+                            if locked_balance > 0:
+                                message += f" (🔒 {locked_balance:.8f})"
+                            message += f" [${value_usdt:.2f}]\n"
+                            message += f"Current Price: ${current_price:.2f}\n"
+
+            # Add market conditions
+            message += "\n📈 Market Conditions:\n"
+            for symbol in self.trading_pairs:
+                try:
+                    ticker = self.client.get_ticker(symbol=symbol)
+                    volume_24h = float(ticker['volume'])
+                    price_change = float(ticker['priceChangePercent'])
+                    message += f"{symbol}:\n"
+                    message += f"24h Volume: ${volume_24h:.2f}\n"
+                    message += f"24h Change: {price_change:+.2f}%\n"
+                except Exception as e:
+                    self.logger.error(f"Error getting market data for {symbol}: {e}")
+
+            send_telegram_message(message)
+
+        except Exception as e:
+            self.logger.error(f"Error sending status update: {e}")
+
     def run(self):
         """Run the trading bot"""
         try:
-            threads = [
-                threading.Thread(target=self.trade, daemon=True),
-                threading.Thread(target=lambda: status_monitor(self), daemon=True),
-                threading.Thread(target=self.cleanup_monitor, daemon=True),
-                threading.Thread(target=self.check_app_status, daemon=True)
-            ]
+            # Start trading threads
+            trade_thread = threading.Thread(target=self.trade)
+            status_thread = threading.Thread(target=self.check_app_status)
+            cleanup_thread = threading.Thread(target=self.cleanup_monitor)
+
+            threads = [trade_thread, status_thread, cleanup_thread]
 
             for thread in threads:
+                thread.daemon = True
                 thread.start()
 
-            # Jika mode simulasi (hanya untuk satu siklus) kita hentikan setelah satu iterasi.
-            if getattr(self, 'simulate', False):
-                self.logger.info("MODE SIMULASI AKTIF: Selesai satu siklus trading.")
-                self.thread_status['main_thread'] = False
+            # Send initial status update
+            self.send_status_update()
 
-            # Wait for threads
-            while any(thread.is_alive() for thread in threads):
+            # Keep main thread alive
+            while self.thread_status['main_thread']:
                 time.sleep(1)
 
         except KeyboardInterrupt:
@@ -467,7 +529,7 @@ class TradingBot:
 
             # Wait for threads to finish
             for thread in threads:
-                thread.join(timeout=5.0)
+                thread.join()
 
         except Exception as e:
             self.logger.critical(f"Fatal error: {e}")
@@ -475,6 +537,7 @@ class TradingBot:
 
         finally:
             self.cleanup()
+            self.logger.info("Bot shutdown complete")
 
     def _check_internet_connection(self):
         """Check if internet connection is available"""
@@ -502,39 +565,19 @@ def status_monitor(bot):
             time.sleep(5)  # Short delay on error
 
 def main():
-    """Main entry point"""
+    """Main entry point for the trading bot"""
     parser = argparse.ArgumentParser(description="Trading Bot Runner")
-    parser.add_argument(
-        "--simulate",
-        action="store_true",
-        help="Jalankan satu siklus simulasi trading (tanpa loop berkelanjutan)"
-    )
+    parser.add_argument("--simulate", action="store_true", help="Run in simulation mode")
     args = parser.parse_args()
 
     try:
         bot = TradingBot()
         if args.simulate:
-            bot.simulate = True  # Flag untuk mode simulasi
-            # Lakukan satu siklus simulasi: ambil saldo, hitung alokasi, dan proses setiap simbol.
-            bot.logger.info("MODE SIMULASI AKTIF: Menjalankan satu siklus trading untuk setiap simbol")
-            balances = get_balances()
-            if not balances:
-                bot.logger.error("Saldo tidak dapat diambil. Pastikan koneksi ke API Binance berjalan dengan baik.")
-                sys.exit(1)
-            usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
-            if usdt_balance <= 0:
-                bot.logger.error("Saldo USDT kosong. Simulasi tidak dapat dijalankan.")
-                sys.exit(1)
-            usdt_per_symbol = usdt_balance / len(SYMBOL_CONFIG)
-            bot.logger.debug(f"Saldo USDT: {usdt_balance}, Alokasi per simbol: {usdt_per_symbol}")
+            bot.simulate = True
+            logger.info("Running in simulation mode")
 
-            for symbol in SYMBOL_CONFIG:
-                bot.logger.info(f"Simulasi trade untuk {symbol} dengan alokasi {usdt_per_symbol} USDT")
-                bot.process_symbol_trade(symbol, usdt_per_symbol, bot.available_balance)
-            # Setelah simulasi selesai, hentikan bot
-            bot.thread_status['main_thread'] = False
-        else:
-            bot.run()
+        bot.run()
+
     except Exception as e:
         logger.critical(f"Failed to start trading bot: {e}")
         sys.exit(1)
