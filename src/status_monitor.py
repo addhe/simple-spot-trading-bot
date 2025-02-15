@@ -45,113 +45,111 @@ def calculate_performance_metrics(trades):
 
 def status_monitor(bot):
     """Monitor trading status and performance"""
-    previous_balances: Dict[str, float] = {}
-    error_count = 0
-    max_errors = 3
-    error_sleep = 60  # Sleep 1 minute after error
+    try:
+        previous_balances: Dict[str, float] = {}
+        error_count = 0
+        max_errors = 3
+        error_sleep = 60  # Sleep 1 minute after error
 
-    while bot.app_status['running']:
-        try:
-            if not bot.app_status['status_thread']:
-                bot.logger.info("Restarting status monitor thread...")
-                bot.app_status['status_thread'] = True
+        while bot.thread_status['status_thread']:
+            try:
+                # Get current balances and calculate total value
+                balances = get_balances()
+                if not balances:
+                    error_count += 1
+                    if error_count >= max_errors:
+                        bot.logger.error("Status monitor: Too many consecutive errors")
+                        bot.thread_status['status_thread'] = False
+                    time.sleep(error_sleep)
+                    continue
+
+                # Calculate total portfolio value
+                total_value = float(balances.get('USDT', {}).get('free', 0.0))
+                total_locked = float(balances.get('USDT', {}).get('locked', 0.0))
+                asset_values = []
+
+                # Process each trading pair
+                for symbol in SYMBOLS:
+                    asset = symbol.replace('USDT', '')
+                    if asset in balances:
+                        free_balance = float(balances[asset]['free'])
+                        locked_balance = float(balances[asset]['locked'])
+                        price = get_last_price(symbol)
+
+                        if price:
+                            asset_value = (free_balance + locked_balance) * price
+                            total_value += asset_value
+
+                            # Calculate balance change
+                            previous_balance = previous_balances.get(asset, 0.0)
+                            change_indicator = format_balance_change(free_balance, previous_balance)
+
+                            # Update balance history
+                            previous_balances[asset] = free_balance
+
+                            # Format balance string
+                            balance_str = (
+                                f"{asset}: {free_balance:.8f}"
+                                f" ({change_indicator})"
+                                f" [${asset_value:.2f}]"
+                            )
+                            if locked_balance > 0:
+                                balance_str += f" 🔒{locked_balance:.8f}"
+                            asset_values.append(balance_str)
+
+                # Calculate performance metrics
+                metrics = calculate_performance_metrics(getattr(bot, 'trades', []))
+
+                # Format status message
+                current_time = datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')
+
+                status_msg = [
+                    "📊 Trading Bot Status Report",
+                    f"⏰ {current_time} UTC",
+                    "",
+                    "💰 Portfolio Summary:",
+                    f"Total Value: ${total_value:.2f}",
+                    f"USDT Available: ${balances.get('USDT', {}).get('free', 0.0):.2f}",
+                    f"USDT Locked: ${total_locked:.2f}",
+                    "",
+                    "🔐 Asset Positions:"
+                ]
+                status_msg.extend(asset_values)
+
+                if metrics and DETAILED_LOGGING:
+                    status_msg.extend([
+                        "",
+                        "📈 Performance Metrics:",
+                        f"Total Trades: {metrics['total_trades']}",
+                        f"Win Rate: {metrics['win_rate']:.2f}%",
+                        f"Profit Factor: {metrics['profit_factor']:.2f}"
+                    ])
+
+                    # Add performance warnings if needed
+                    if metrics['win_rate'] < WIN_RATE_THRESHOLD * 100:
+                        status_msg.append(f"⚠️ Win rate below threshold ({WIN_RATE_THRESHOLD*100}%)")
+                    if metrics['profit_factor'] < PROFIT_FACTOR_THRESHOLD:
+                        status_msg.append(f"⚠️ Profit factor below threshold ({PROFIT_FACTOR_THRESHOLD})")
+
+                # Send status message to Telegram
+                send_telegram_message("\n".join(status_msg))
+
+                # Reset error count on successful update
                 error_count = 0
 
-            # Get current balances
-            balances = get_balances()
-            if not balances:
-                error_msg = "⚠️ Warning: Could not fetch balances. Will retry in 60 seconds."
-                bot.logger.warning("Could not fetch balances")
-                send_telegram_message(error_msg)
-                time.sleep(error_sleep)
+                # Sleep until next update
+                time.sleep(STATUS_INTERVAL)
+
+            except Exception as e:
+                bot.logger.error(f"Error in status monitor: {e}")
                 error_count += 1
                 if error_count >= max_errors:
-                    bot.logger.error("Status monitor: Too many balance fetch errors")
-                    send_telegram_message("🚨 Critical: Balance fetch failed multiple times. Check API connectivity.")
-                    bot.app_status['status_thread'] = False
-                continue
+                    bot.logger.error("Status monitor: Too many consecutive errors")
+                    bot.thread_status['status_thread'] = False
+                time.sleep(error_sleep)
 
-            # Calculate total portfolio value
-            total_value = float(balances.get('USDT', {}).get('free', 0.0))
-            total_locked = float(balances.get('USDT', {}).get('locked', 0.0))
-            asset_values = []
-            error_count = 0  # Reset error count on successful balance fetch
-
-            # Process each trading pair
-            for symbol in SYMBOLS:
-                asset = symbol.replace('USDT', '')
-                if asset in balances:
-                    free_balance = float(balances[asset]['free'])
-                    locked_balance = float(balances[asset]['locked'])
-                    price = get_last_price(symbol)
-
-                    if price:
-                        asset_value = (free_balance + locked_balance) * price
-                        total_value += asset_value
-
-                        # Calculate balance change
-                        previous_balance = previous_balances.get(asset, 0.0)
-                        change_indicator = format_balance_change(free_balance, previous_balance)
-
-                        # Update balance history
-                        previous_balances[asset] = free_balance
-
-                        # Format balance string
-                        balance_str = (
-                            f"{asset}: {free_balance:.8f}"
-                            f" ({change_indicator})"
-                            f" [${asset_value:.2f}]"
-                        )
-                        if locked_balance > 0:
-                            balance_str += f" 🔒{locked_balance:.8f}"
-                        asset_values.append(balance_str)
-
-            # Calculate performance metrics
-            metrics = calculate_performance_metrics(getattr(bot, 'trades', []))
-
-            # Format status message
-            current_time = datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')
-
-            status_msg = [
-                "📊 Trading Bot Status Report",
-                f"⏰ {current_time} UTC",
-                "",
-                "💰 Portfolio Summary:",
-                f"Total Value: ${total_value:.2f}",
-                f"USDT Available: ${balances.get('USDT', {}).get('free', 0.0):.2f}",
-                f"USDT Locked: ${total_locked:.2f}",
-                "",
-                "🔐 Asset Positions:"
-            ]
-            status_msg.extend(asset_values)
-
-            if metrics and DETAILED_LOGGING:
-                status_msg.extend([
-                    "",
-                    "📈 Performance Metrics:",
-                    f"Total Trades: {metrics['total_trades']}",
-                    f"Win Rate: {metrics['win_rate']:.2f}%",
-                    f"Profit Factor: {metrics['profit_factor']:.2f}"
-                ])
-
-                # Add performance warnings if needed
-                if metrics['win_rate'] < WIN_RATE_THRESHOLD * 100:
-                    status_msg.append(f"⚠️ Win rate below threshold ({WIN_RATE_THRESHOLD*100}%)")
-                if metrics['profit_factor'] < PROFIT_FACTOR_THRESHOLD:
-                    status_msg.append(f"⚠️ Profit factor below threshold ({PROFIT_FACTOR_THRESHOLD})")
-
-            # Send status message to Telegram
-            send_telegram_message("\n".join(status_msg))
-
-        except Exception as e:
-            bot.logger.error(f"Error in status monitor: {e}")
-            send_telegram_message(f"⚠️ Error in status monitor: {str(e)}")
-            error_count += 1
-            if error_count >= max_errors:
-                bot.logger.error("Status monitor: Too many consecutive errors")
-                send_telegram_message("🚨 Critical: Status monitor encountered multiple errors. Check logs.")
-                bot.app_status['status_thread'] = False
-            time.sleep(error_sleep)
-            continue
-
-        time.sleep(STATUS_INTERVAL)
+    except Exception as e:
+        bot.logger.error(f"Critical error in status monitor: {e}")
+    finally:
+        # Make sure to close any open database connections in this thread
+        bot.db_manager.close_connection()

@@ -318,64 +318,43 @@ class TradingBot:
 
     def trade(self):
         """Main trading loop"""
-        error_count = 0
-        max_errors = 3
-        error_sleep = 60  # Sleep 1 minute after error
+        try:
+            while self.thread_status['main_thread']:
+                try:
+                    # Get current balances
+                    balances = get_balances()
+                    if not balances:
+                        self.logger.error("Failed to fetch balances")
+                        time.sleep(10)
+                        continue
 
-        while self.thread_status['main_thread']:
-            try:
-                if not self.thread_status['trade_thread']:
-                    self.logger.info("Restarting trade thread...")
-                    self.thread_status['trade_thread'] = True
-                    error_count = 0
+                    # Update available balance
+                    self.available_balance = balances.get('USDT', {}).get('free', 0)
 
-                # Check internet connection first
-                if not self._check_internet_connection():
-                    self.logger.warning("No internet connection, waiting...")
-                    time.sleep(error_sleep)
-                    continue
+                    # Calculate USDT per symbol
+                    active_pairs = len(self.trading_pairs)
+                    usdt_per_symbol = self.available_balance / active_pairs if active_pairs > 0 else 0
 
-                balances = get_balances()
-                self.logger.info(f"Balances fetched: {balances}")
-                message = "📊 Trading Bot Status Report\n"
-                message += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                message += "💰 Portfolio Summary:\n"
-                message += f"Total Value: ${self.calculate_total_value(balances)}\n"
-                message += f"USDT Available: {balances.get('USDT', {}).get('free', 0)}\n\n"
-                message += "🔐 Asset Positions:\n"
+                    # Process each trading pair
+                    for symbol in self.trading_pairs:
+                        try:
+                            self.process_symbol_trade(symbol, usdt_per_symbol, balances)
+                        except Exception as e:
+                            self.handle_symbol_error(symbol, e)
+                            continue
 
-                for symbol in SYMBOL_CONFIG:
-                    if symbol in balances:
-                        free_balance = balances[symbol]['free']
-                        if self.is_valid_symbol(symbol):
-                            current_price = self.get_current_market_price(symbol)
-                            message += f"{symbol}: Current Price: {current_price}, Balance: {free_balance}\n"
-                        else:
-                            self.logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
-                    else:
-                        self.logger.error(f"Invalid symbol: {symbol} not in balances.")
+                    # Sleep between iterations
+                    time.sleep(10)
 
-                send_telegram_message(message)
+                except Exception as e:
+                    self.logger.error(f"Error in trade loop: {e}")
+                    time.sleep(10)
 
-                for symbol in SYMBOL_CONFIG:
-                    try:
-                        self.process_symbol_trade(symbol, balances.get('USDT', {}).get('free', 0.0) / len(SYMBOL_CONFIG), self.available_balance)
-                    except Exception as e:
-                        self.logger.error(f"Error processing {symbol}: {e}")
-                        send_telegram_message(f"❌ Error processing trade for {symbol}: {e}")
-                        self.handle_symbol_error(symbol, e)
-                        continue  # Continue with next symbol
-
-            except Exception as e:
-                self.logger.error(f"Critical error in trade function: {e}")
-                error_count += 1
-                if error_count >= max_errors:
-                    self.logger.error("Trade thread: Too many consecutive errors")
-                    self.thread_status['trade_thread'] = False
-                time.sleep(error_sleep)
-                continue
-
-            time.sleep(CACHE_LIFETIME)
+        except Exception as e:
+            self.logger.error(f"Critical error in trade function: {e}")
+        finally:
+            # Make sure to close any open database connections in this thread
+            self.db_manager.close_connection()
 
     def cleanup_old_data(self):
         """Clean up historical data older than 24 hours"""

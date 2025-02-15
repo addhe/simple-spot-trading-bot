@@ -1,30 +1,29 @@
 import sqlite3
+import threading
 from src.logger import logger
 
 class DatabaseManager:
     def __init__(self, db_path='table_transactions.db'):
         self.db_path = db_path
-        self._connection = None
-        self._cursor = None
+        self._local = threading.local()
 
     def get_connection(self):
-        """Get a database connection, creating it if necessary"""
-        if self._connection is None:
+        """Get a thread-local database connection"""
+        if not hasattr(self._local, 'connection'):
             try:
-                self._connection = sqlite3.connect(self.db_path)
-                self._connection.row_factory = sqlite3.Row
+                self._local.connection = sqlite3.connect(self.db_path)
+                self._local.connection.row_factory = sqlite3.Row
             except Exception as e:
                 logger.error(f"Error connecting to database: {e}")
                 raise
-        return self._connection
+        return self._local.connection
 
     def close_connection(self):
-        """Close the database connection if it exists"""
-        if self._connection is not None:
+        """Close the thread-local database connection if it exists"""
+        if hasattr(self._local, 'connection'):
             try:
-                self._connection.close()
-                self._connection = None
-                self._cursor = None
+                self._local.connection.close()
+                del self._local.connection
             except Exception as e:
                 logger.error(f"Error closing database connection: {e}")
 
