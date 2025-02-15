@@ -4,37 +4,51 @@ from src.save_transaction import save_transaction
 from src.send_telegram_message import send_telegram_message
 from datetime import datetime
 from src.logger import logger
+from config.settings import MIN_24H_VOLUME
 
 
 def get_24h_stats(symbol):
     """
     Fetch 24-hour statistics for the given symbol from Binance.
     """
-    # Implementation here
-    pass
+    try:
+        from binance.client import Client
+        client = Client()
+        stats = client.get_ticker(symbol=symbol)
+        return {
+            'symbol': symbol,
+            'price': float(stats['lastPrice']),
+            'volume': float(stats['volume']),
+            'high': float(stats['highPrice']),
+            'low': float(stats['lowPrice']),
+            'price_change': float(stats['priceChangePercent'])
+        }
+    except Exception as e:
+        logger.error(f"Error fetching 24h stats for {symbol}: {e}")
+        return None
 
 
 def get_last_price(symbol):
     """
     Fetch the last price for the given symbol from Binance.
     """
-    # Implementation here
-    pass
+    stats = get_24h_stats(symbol)
+    return stats['price'] if stats else None
+
 
 def process_symbol_trade(self, symbol):
     """Process trading logic for a symbol with error handling."""
     logger.info(f"Starting trade processing for {symbol}")  # Log entry into the method
     try:
-        market_stats = self.get_market_stats(symbol)
+        market_stats = get_24h_stats(symbol)
         if not market_stats:
             raise ValueError(f"Could not fetch market stats for {symbol}")
 
         current_price = market_stats['price']
         volume_24h = market_stats['volume']
-        moving_average = self.get_moving_average(symbol)
 
-        # Log current price and moving average
-        logger.info(f"Current Price: {current_price}, Moving Average: {moving_average}")
+        # Log current price
+        logger.info(f"Current Price: {current_price}")
 
         if volume_24h < MIN_24H_VOLUME:
             logger.info(

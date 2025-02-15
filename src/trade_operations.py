@@ -6,6 +6,7 @@ from src.logger import logger
 from .get_last_price import get_last_price
 from collections import deque
 import numpy as np
+from config.settings import SYMBOLS, MARKET_VOLATILITY_LIMIT, TAKE_PROFIT, STOP_LOSS_PERCENTAGE
 
 # Define moving average windows
 short_window = 5  # Short-term moving average window
@@ -13,9 +14,6 @@ long_window = 20   # Long-term moving average window
 
 # Initialize a deque to store prices for moving average calculation
 prices = deque(maxlen=long_window)
-
-# Define valid symbols
-SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'LTCUSDT']  # Add more symbols as needed
 
 def is_valid_symbol(symbol):
     return symbol in SYMBOLS
@@ -72,99 +70,82 @@ def buy_asset(client, symbol, quantity):
         logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
         return
 
-    logger.info(f"Processing trade for {symbol}")
     try:
-        # Check internet connection
-        if not _check_internet_connection():
-            raise ConnectionError("No internet connection available")
+        # Get current market price
+        ticker = client.get_symbol_ticker(symbol=symbol)
+        current_price = float(ticker['price'])
 
-        current_price = get_last_price(symbol)
-        if current_price is None:
-            logger.error(f"Failed to retrieve price for {symbol}")
-            return
-        prices.append(current_price)  # Add current price to the deque
+        # Calculate order parameters
+        stop_loss = current_price * (1 - STOP_LOSS_PERCENTAGE)
+        take_profit = current_price * TAKE_PROFIT.get(symbol, 1.02)  # Default 2% profit
 
-        if should_buy():
-            # Check if we have enough balance
-            balances = get_balances()
-            usdt_balance = float(balances.get('USDT', {}).get('free', 0.0))
+        # Place market buy order
+        order = client.create_order(
+            symbol=symbol,
+            side=Client.SIDE_BUY,
+            type=Client.ORDER_TYPE_MARKET,
+            quantity=quantity
+        )
 
-            order_value = quantity * current_price
-            if usdt_balance < order_value:
-                raise ValueError(f"Insufficient USDT balance. Required: {order_value}, Available: {usdt_balance}")
-
-            order = client.order_market_buy(
-                symbol=symbol,
-                quantity=quantity
-            )
-
-            # Log successful transaction
-            logger.info(f"✅ Buy order successful for {symbol}: Quantity: {quantity}, Price: {current_price}, Total Value: {order_value} USDT")
-
+        if order['status'] == 'FILLED':
+            logger.info(f"Buy order executed for {symbol} at {current_price}")
             # Save transaction details
-            save_transaction(symbol, 'BUY', quantity, current_price, order_value)
-
-            return order
+            save_transaction(symbol, 'BUY', quantity, current_price)
+            return True, order
         else:
-            logger.info(f"Waiting for a better price to buy {symbol}.")
+            logger.error(f"Buy order failed for {symbol}: {order}")
+            return False, None
 
     except BinanceAPIException as e:
-        logger.error(f"Binance API Exception during buy: {e}")
-        raise
+        logger.error(f"Binance API error during buy: {e}")
+        return False, None
     except Exception as e:
         logger.error(f"Unexpected error during buy: {e}")
-        raise
+        return False, None
 
-
-def convert_asset_to_usdt(client, symbol, quantity):
+def sell_asset(client, symbol, quantity):
+    """
+    Perform a market sell of the specified asset on Binance.
+    """
     if not is_valid_symbol(symbol):
         logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
         return
 
     try:
-        response = client.sapi_post('/v1/asset/convert', {
-            'fromAsset': symbol,
-            'toAsset': 'USDT',
-            'amount': quantity,
-            'type': 'spot'
-        })
-        logger.info(f"Converted {quantity} {symbol} to USDT successfully.")
-    except Exception as e:
-        logger.error(f"Error converting {symbol} to USDT: {e}")
+        # Place market sell order
+        order = client.create_order(
+            symbol=symbol,
+            side=Client.SIDE_SELL,
+            type=Client.ORDER_TYPE_MARKET,
+            quantity=quantity
+        )
 
-
-def sell_asset(client, symbol, buy_price, quantity):
-    if not is_valid_symbol(symbol):
-        logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
-        return
-
-    logger.info(f"Processing trade for {symbol}")
-    current_price = get_last_price(symbol)
-    if current_price is None:
-        logger.error(f"Failed to retrieve price for {symbol}")
-        return
-    prices.append(current_price)  # Add current price to the deque
-
-    if should_sell():
-        try:
-            # Existing sell logic
-            order = client.order_market_sell(
-                symbol=symbol,
-                quantity=quantity
-            )
-
-            # Log successful transaction
-            logger.info(f"✅ Sell order successful for {symbol}: Quantity: {quantity}, Price: {current_price}, Total Value: {quantity * current_price} USDT")
-
+        if order['status'] == 'FILLED':
+            # Get the actual sell price
+            sell_price = float(order['fills'][0]['price'])
+            logger.info(f"Sell order executed for {symbol} at {sell_price}")
             # Save transaction details
-            save_transaction(symbol, 'SELL', quantity, current_price, quantity * current_price)
+            save_transaction(symbol, 'SELL', quantity, sell_price)
+            return True, order
+        else:
+            logger.error(f"Sell order failed for {symbol}: {order}")
+            return False, None
 
-            return order
-        except BinanceAPIException as e:
-            logger.error(f"Binance API Exception during sell: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error during sell: {e}")
-            raise
+    except BinanceAPIException as e:
+        logger.error(f"Binance API error during sell: {e}")
+        return False, None
+    except Exception as e:
+        logger.error(f"Unexpected error during sell: {e}")
+        return False, None
+
+def convert_asset_to_usdt(client, symbol, quantity):
+    """
+    Convert an asset to USDT using market sell
+    """
+    success, order = sell_asset(client, symbol, quantity)
+    if success:
+        logger.info(f"Successfully converted {quantity} {symbol} to USDT")
+        return True
     else:
-        logger.info(f"Waiting for a better price to sell {symbol}.")
+        logger.error(f"Failed to convert {quantity} {symbol} to USDT")
+        return False

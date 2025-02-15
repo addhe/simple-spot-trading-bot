@@ -609,12 +609,16 @@ class TradingBot:
         Check if we have any balance for a given symbol
         Returns tuple of (has_balance, balance_amount)
         """
-        base_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
+        base_symbol, _ = self.get_symbol_info(symbol)
 
         if base_symbol in balances:
             balance = float(balances[base_symbol].get('free', 0))
             if balance > 0:
                 return True, balance
+            self.logger.debug(f"Zero balance for {base_symbol}")
+        else:
+            self.logger.debug(f"No balance entry for {base_symbol}")
+
         return False, 0
 
     def calculate_total_value(self, balances):
@@ -627,18 +631,45 @@ class TradingBot:
         usdt_balance = float(balances.get('USDT', {}).get('free', 0))
         total_value += usdt_balance
 
+        # Track processed base symbols to avoid duplicates
+        processed_symbols = set()
+
         for symbol in self.trading_pairs:
-            has_balance, balance_amount = self.check_symbol_balance(symbol, balances)
-            if has_balance:
-                current_price = self.get_current_market_price(symbol)
-                if current_price:
-                    asset_value = balance_amount * current_price
-                    total_value += asset_value
-                    self.logger.info(f"Added {symbol[:-4]} value: {asset_value} USDT")
+            base_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
+
+            # Skip if we've already processed this base symbol
+            if base_symbol in processed_symbols:
+                continue
+
+            processed_symbols.add(base_symbol)
+
+            if base_symbol in balances:
+                asset_balance = float(balances[base_symbol].get('free', 0))
+                if asset_balance > 0:
+                    current_price = self.get_current_market_price(symbol)
+                    if current_price:
+                        asset_value = asset_balance * current_price
+                        total_value += asset_value
+                        self.logger.info(f"Added {base_symbol} value: {asset_value} USDT")
+                else:
+                    self.logger.debug(f"Zero balance for {base_symbol}")
             else:
-                self.logger.debug(f"No balance found for {symbol}")
+                self.logger.debug(f"No balance entry for {base_symbol}")
 
         return total_value
+
+    def get_symbol_info(self, symbol):
+        """
+        Get detailed information about a trading symbol
+        Returns base symbol and quote symbol
+        """
+        if symbol.endswith('USDT'):
+            base = symbol[:-4]
+            quote = 'USDT'
+        else:
+            base = symbol
+            quote = 'USDT'  # Default quote currency
+        return base, quote
 
     def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
         """
