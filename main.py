@@ -602,19 +602,27 @@ class TradingBot:
         """
         Calculate total portfolio value based on configured trading pairs
         """
-        total_value = float(balances.get('USDT', {}).get('free', 0))
+        total_value = 0.0
 
-        for full_symbol in self.trading_pairs:
-            base_symbol = full_symbol[:-4]  # Remove USDT suffix
+        # Add USDT balance
+        usdt_balance = float(balances.get('USDT', {}).get('free', 0))
+        total_value += usdt_balance
+
+        for symbol in self.trading_pairs:
+            # Extract base symbol (e.g., 'BTC' from 'BTCUSDT')
+            base_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
+
             if base_symbol in balances:
-                try:
-                    current_price = self.get_current_market_price(full_symbol)
-                    if current_price:
-                        balance = float(balances[base_symbol]['free'])
-                        total_value += balance * current_price
-                        self.logger.info(f"Added {base_symbol} value: {balance * current_price} USDT")
-                except Exception as e:
-                    self.logger.error(f"Error calculating value for {base_symbol}: {e}")
+                # Get asset balance and current price
+                asset_balance = float(balances[base_symbol].get('free', 0))
+                current_price = self.get_current_market_price(symbol)
+
+                if current_price and asset_balance > 0:
+                    asset_value = asset_balance * current_price
+                    total_value += asset_value
+                    self.logger.info(f"Added {base_symbol} value: {asset_value} USDT")
+            else:
+                self.logger.debug(f"Base symbol {base_symbol} not found in balances")
 
         return total_value
 
@@ -649,8 +657,12 @@ class TradingBot:
             self.logger.error(f"Symbol {symbol} not in configured trading pairs")
             return
 
-        base_symbol = symbol[:-4]  # Remove USDT suffix
+        # Extract base symbol (e.g., 'BTC' from 'BTCUSDT')
+        base_symbol = symbol[:-4] if symbol.endswith('USDT') else symbol
         balances = get_balances()
+
+        if base_symbol not in balances:
+            self.logger.debug(f"Base symbol {base_symbol} not in balances, initializing position")
 
         # Retry mechanism for getting current price
         current_price = None
