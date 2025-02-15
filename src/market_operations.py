@@ -3,7 +3,7 @@ from src.get_balances import get_balances
 from src.save_transaction import save_transaction
 from src.send_telegram_message import send_telegram_message
 from datetime import datetime
-from main import logger
+from src.logger import logger
 
 
 def get_24h_stats(symbol):

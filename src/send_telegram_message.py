@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Dict
 
 from config.settings import TELEGRAM_TOKEN, TELEGRAM_GROUP_ID
-from main import logger
+from src.logger import logger
 
 def send_telegram_message(message: str,
                           chat_id: str = TELEGRAM_GROUP_ID,
