@@ -29,6 +29,10 @@ def process_symbol_trade(self, symbol):
 
         current_price = market_stats['price']
         volume_24h = market_stats['volume']
+        moving_average = self.get_moving_average(symbol)
+
+        # Log current price and moving average
+        self.logger.info(f"Current Price: {current_price}, Moving Average: {moving_average}")
 
         if volume_24h < MIN_24H_VOLUME:
             self.logger.info(
@@ -106,7 +110,6 @@ def get_available_usdt(self):
 def should_buy(self, symbol, current_price):
     """Determine if the bot should buy the asset."""
     moving_average = self.get_moving_average(symbol)
-    self.logger.info(f"Current Price: {current_price}, Moving Average: {moving_average}")
 
     # Example condition: Buy if current price is significantly below moving average
     if current_price < moving_average * 0.95:  # Allow for a 5% buffer
