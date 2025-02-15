@@ -459,13 +459,13 @@ class TradingBot:
                 for symbol in SYMBOLS:
                     if symbol in balances:
                         free_balance = balances[symbol]['free']
-                        if symbol in SYMBOLS:
+                        if self.is_valid_symbol(symbol):
                             current_price = self.get_current_market_price(symbol)
                             message += f"{symbol}: Current Price: {current_price}, Balance: {free_balance}\n"
                         else:
                             self.logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
                     else:
-                        self.logger.error(f"Invalid symbol: {symbol} not in SYMBOLS list.")
+                        self.logger.error(f"Invalid symbol: {symbol} not in balances.")
 
                 send_telegram_message(message)
 
@@ -644,6 +644,9 @@ class TradingBot:
                 if current_price:
                     total_value += float(balance['free']) * current_price
         return total_value + float(balances.get('USDT', {}).get('free', 0.0))
+
+    def is_valid_symbol(self, symbol):
+        return symbol in SYMBOLS
 
 def main():
     """Main entry point"""
