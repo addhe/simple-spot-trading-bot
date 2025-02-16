@@ -471,10 +471,11 @@ class TradingBot:
         try:
             # Start trading threads
             trade_thread = threading.Thread(target=self.trade)
+            status_monitor_thread = threading.Thread(target=status_monitor, args=(self,))
             status_thread = threading.Thread(target=self.check_app_status)
             cleanup_thread = threading.Thread(target=self.cleanup_monitor)
 
-            threads = [trade_thread, status_thread, cleanup_thread]
+            threads = [trade_thread, status_monitor_thread, status_thread, cleanup_thread]
 
             for thread in threads:
                 thread.daemon = True
@@ -490,6 +491,7 @@ class TradingBot:
         except KeyboardInterrupt:
             self.logger.info("Shutting down gracefully...")
             self.thread_status['main_thread'] = False
+            self.thread_status['status_thread'] = False
 
             # Wait for threads to finish
             for thread in threads:
@@ -498,6 +500,7 @@ class TradingBot:
         except Exception as e:
             self.logger.critical(f"Fatal error: {e}")
             self.thread_status['main_thread'] = False
+            self.thread_status['status_thread'] = False
 
         finally:
             self.cleanup()
