@@ -105,7 +105,9 @@ class TradingBot:
         try:
             # Log current balances before checking
             self.logger.debug(f"Current balances before checking: {balances}")
-            self.logger.debug(f"Balances dictionary state: {balances.__dict__}")
+
+            # Log the balances dictionary state correctly
+            self.logger.debug(f"Balances dictionary state: {balances}")
 
             # Get current market price
             current_price = self.get_current_market_price(symbol)
@@ -189,22 +191,14 @@ class TradingBot:
         return symbol
 
     def check_symbol_balance(self, symbol, balances):
-        """
-        Check if we have any balance for a given symbol
-        Returns tuple of (has_balance, balance_amount)
-        """
-        base_symbol, _ = self.get_symbol_info(symbol)
-        if not base_symbol:
-            return False, 0
+        base_asset, quote_asset = self.get_symbol_info(symbol)
 
-        if base_symbol in balances:
-            balance = float(balances[base_symbol].get('free', 0))
-            if balance > 0:
-                return True, balance
-            self.logger.debug(f"Zero balance for {base_symbol}")
-        else:
-            self.logger.debug(f"No balance entry for {base_symbol}")
+        # Determine relevant asset based on trade direction
+        relevant_asset = quote_asset if self.trade_manager.should_buy() else base_asset
 
+        if relevant_asset in balances:
+            balance = balances[relevant_asset]['free']
+            return (True, balance) if balance > 0 else (False, 0)
         return False, 0
 
     def get_symbol_info(self, symbol):
@@ -353,44 +347,13 @@ class TradingBot:
         return macd, signal_line
 
     def calculate_position_size(self, symbol, current_price, usdt_per_symbol):
-        """
-        Calculate position size based on available balance and symbol configuration
-        """
-        try:
-            # Get minimum trade amount for the symbol
-            min_trade = self.min_trade_amount.get(symbol, MIN_POSITION_SIZE)
+        _, quote_asset = self.get_symbol_info(symbol)
+        usdt_balance = self.check_symbol_balance(symbol, self.balances)[1]
 
-            # Calculate minimum USDT required
-            min_usdt_required = min_trade * current_price
-
-            # Calculate maximum position size based on available balance
-            max_position = min(usdt_per_symbol, MAX_INVESTMENT_PER_TRADE) / current_price
-
-            # If we can't meet minimum trade amount, skip
-            if max_position < min_trade:
-                self.logger.warning(
-                    f"Insufficient funds for {symbol}. "
-                    f"Required: {min_usdt_required:.2f} USDT, "
-                    f"Available per pair: {usdt_per_symbol:.2f} USDT"
-                )
-                return 0
-
-            # Get symbol precision
-            precision = SYMBOL_CONFIG[symbol]['quantity_precision']
-
-            # Round down to meet symbol precision
-            position_size = float(format(max_position, f'.{precision}f'))
-
-            self.logger.info(
-                f"Calculated position for {symbol}: {position_size} "
-                f"({position_size * current_price:.2f} USDT)"
-            )
-
-            return position_size
-
-        except Exception as e:
-            self.logger.error(f"Error calculating position size for {symbol}: {e}")
-            return 0
+        # Ensure we don't exceed available USDT
+        position_size_usdt = min(usdt_per_symbol, usdt_balance)
+        position_size = position_size_usdt / current_price
+        return round(position_size, 4)
 
     def trade(self):
         """Main trading loop"""
