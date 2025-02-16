@@ -360,17 +360,15 @@ class TradingBot:
     def cleanup_old_data(self):
         """Clean up historical data older than 24 hours"""
         try:
-            conn = self.db_manager.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
+            query = '''
                 DELETE FROM historical_data
                 WHERE timestamp < datetime('now', '-24 hours', 'localtime')
-            ''')
-            conn.commit()
-            conn.close()
+            '''
+            self.db_manager.execute_query(query)
             self.logger.info("Successfully cleaned up old historical data")
-        except sqlite3.Error as e:
+        except Exception as e:
             self.logger.error(f"Failed to clean up historical data: {e}")
+            raise
 
     def cleanup_monitor(self):
         """Monitor thread for cleaning up old data"""
@@ -381,39 +379,24 @@ class TradingBot:
 
         while self.thread_status['cleanup_thread']:
             try:
-                if not self.thread_status['cleanup_thread']:
-                    self.logger.info("Restarting cleanup monitor thread...")
-                    self.thread_status['cleanup_thread'] = True
-                    error_count = 0
-
                 # Attempt database cleanup
-                try:
-                    self.cleanup_old_data()
-                    # Reset error count on successful cleanup
-                    error_count = 0
-                except sqlite3.Error as e:
-                    self.logger.error(f"Database error during cleanup: {e}")
-                    error_count += 1
-                except Exception as e:
-                    self.logger.error(f"Unexpected error during cleanup: {e}")
-                    error_count += 1
+                self.cleanup_old_data()
+                # Reset error count on successful cleanup
+                error_count = 0
 
-                if error_count >= max_errors:
-                    self.logger.error("Cleanup monitor: Too many consecutive errors")
-                    self.thread_status['cleanup_thread'] = False
-                    time.sleep(error_sleep)
-                    continue
+                # Sleep until next cleanup
+                time.sleep(cleanup_interval)
 
             except Exception as e:
-                self.logger.error(f"Critical error in cleanup monitor: {e}")
+                self.logger.error(f"Error in cleanup monitor: {e}")
                 error_count += 1
+
                 if error_count >= max_errors:
                     self.logger.error("Cleanup monitor: Too many consecutive errors")
                     self.thread_status['cleanup_thread'] = False
-                time.sleep(error_sleep)
-                continue
+                    break
 
-            time.sleep(cleanup_interval)
+                time.sleep(error_sleep)
 
     def check_app_status(self):
         """Monitor application status"""
