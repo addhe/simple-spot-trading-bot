@@ -31,7 +31,8 @@ from config.settings import (
     TRAILING_STOP,
     TAKE_PROFIT,
     MIN_TRADE_AMOUNT,
-    MAX_INVESTMENT_PER_TRADE
+    MAX_INVESTMENT_PER_TRADE,
+    RSI_OVERSOLD
 )
 
 from src.logger import logger
@@ -278,11 +279,41 @@ class TradingBot:
             # Log the indicator values for debugging
             self.logger.info(f"Latest indicators for {symbol} - MA_50: {latest['MA_50']}, MA_200: {latest['MA_200']}, RSI: {latest['RSI']}, BB_lower: {latest['BB_lower']}")
 
-            # Decision logic for buying
-            if latest['close_price'] < latest['BB_lower'] and latest['RSI'] < 30:
-                return True  # Conditions for buying are met
+            # Enhanced decision logic for buying
+            buy_signals = 0
 
-            return False  # Conditions not met
+            # RSI oversold condition (weight: 2)
+            if latest['RSI'] < RSI_OVERSOLD:
+                buy_signals += 2
+                self.logger.info(f"{symbol} RSI oversold: {latest['RSI']:.2f}")
+
+            # Price below lower Bollinger Band (weight: 2)
+            if latest['close_price'] < latest['BB_lower']:
+                buy_signals += 2
+                self.logger.info(f"{symbol} Below BB: {latest['close_price']:.2f} < {latest['BB_lower']:.2f}")
+
+            # MACD crossover (weight: 1)
+            if df['MACD_hist'].iloc[-1] > 0 and df['MACD_hist'].iloc[-2] < 0:
+                buy_signals += 1
+                self.logger.info(f"{symbol} MACD crossover")
+
+            # Price below MA50 but above MA200 (weight: 1)
+            if latest['close_price'] < latest['MA_50'] and latest['close_price'] > latest['MA_200']:
+                buy_signals += 1
+                self.logger.info(f"{symbol} Between MAs")
+
+            # Volume spike (weight: 1)
+            avg_volume = df['volume'].rolling(window=20).mean().iloc[-1]
+            if latest['volume'] > avg_volume * 1.5:
+                buy_signals += 1
+                self.logger.info(f"{symbol} Volume spike: {latest['volume']:.2f} > {avg_volume:.2f}")
+
+            # Need at least 3 buy signals to enter
+            should_buy = buy_signals >= 3
+            if should_buy:
+                self.logger.info(f"Buy signals triggered for {symbol}: {buy_signals} signals")
+
+            return should_buy
         except Exception as e:
             self.logger.error(f"Error in should_buy for {symbol}: {e}")
             return False
