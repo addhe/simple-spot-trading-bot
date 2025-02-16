@@ -6,63 +6,62 @@ class DatabaseManager:
     def __init__(self, db_path='table_transactions.db'):
         self.db_path = db_path
         self._local = threading.local()
+        self._lock = threading.Lock()
 
-    def get_connection(self):
-        """Get a thread-local database connection"""
+    def _ensure_connection(self):
+        """Ensure we have a valid database connection"""
         if not hasattr(self._local, 'connection') or self._local.connection is None:
             try:
-                self._local.connection = sqlite3.connect(self.db_path)
+                self._local.connection = sqlite3.connect(self.db_path, check_same_thread=False)
                 self._local.connection.row_factory = sqlite3.Row
+                self._local.cursor = self._local.connection.cursor()
             except Exception as e:
-                logger.error(f"Error connecting to database: {e}")
+                logger.error(f"Error creating database connection: {e}")
                 raise
-        return self._local.connection
-
-    def get_cursor(self):
-        """Get a cursor from the current connection"""
-        conn = self.get_connection()
-        if not hasattr(self._local, 'cursor') or self._local.cursor is None:
-            self._local.cursor = conn.cursor()
-        return self._local.cursor
-
-    def commit(self):
-        """Commit the current transaction"""
-        if hasattr(self._local, 'connection') and self._local.connection is not None:
-            try:
-                self._local.connection.commit()
-            except Exception as e:
-                logger.error(f"Error committing transaction: {e}")
-                raise
-
-    def close_connection(self):
-        """Close the thread-local database connection if it exists"""
-        if hasattr(self._local, 'cursor') and self._local.cursor is not None:
-            try:
-                self._local.cursor.close()
-            except Exception as e:
-                logger.error(f"Error closing cursor: {e}")
-            self._local.cursor = None
-
-        if hasattr(self._local, 'connection') and self._local.connection is not None:
-            try:
-                self._local.connection.close()
-            except Exception as e:
-                logger.error(f"Error closing connection: {e}")
-            self._local.connection = None
 
     def execute_query(self, query, params=None):
-        """Execute a query and return the cursor"""
-        try:
-            cursor = self.get_cursor()
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            self.commit()
-            return cursor
-        except Exception as e:
-            logger.error(f"Error executing query: {query} - {e}")
-            raise
+        """Execute a query with thread safety"""
+        with self._lock:
+            try:
+                self._ensure_connection()
+                if params:
+                    self._local.cursor.execute(query, params)
+                else:
+                    self._local.cursor.execute(query)
+                self._local.connection.commit()
+                return self._local.cursor
+            except Exception as e:
+                logger.error(f"Error executing query: {query} - {e}")
+                # Try to reconnect once
+                self.close_connection()
+                self._ensure_connection()
+                try:
+                    if params:
+                        self._local.cursor.execute(query, params)
+                    else:
+                        self._local.cursor.execute(query)
+                    self._local.connection.commit()
+                    return self._local.cursor
+                except Exception as e:
+                    logger.error(f"Error executing query after reconnect: {query} - {e}")
+                    raise
+
+    def close_connection(self):
+        """Close the database connection safely"""
+        with self._lock:
+            if hasattr(self._local, 'cursor') and self._local.cursor is not None:
+                try:
+                    self._local.cursor.close()
+                except Exception as e:
+                    logger.error(f"Error closing cursor: {e}")
+                self._local.cursor = None
+
+            if hasattr(self._local, 'connection') and self._local.connection is not None:
+                try:
+                    self._local.connection.close()
+                except Exception as e:
+                    logger.error(f"Error closing connection: {e}")
+                self._local.connection = None
 
     def get_last_buy_price(self, symbol):
         """Get the last buy price for a symbol"""
@@ -104,8 +103,10 @@ class DatabaseManager:
                 VALUES (?, ?)
             """
             self.execute_query(query, (symbol, price))
+            return True
         except Exception as e:
             logger.error(f"Error updating highest price for {symbol}: {e}")
+            return False
 
     def setup_tables(self):
         """Initialize database tables"""
@@ -145,7 +146,7 @@ class DatabaseManager:
                     UNIQUE(symbol, timestamp)
                 )
             """)
-
+            return True
         except Exception as e:
             logger.error(f"Error setting up database: {e}")
             raise
@@ -158,6 +159,7 @@ class DatabaseManager:
                 VALUES (?, ?, ?, ?)
             """
             self.execute_query(query, (symbol, transaction_type, quantity, price))
+            return True
         except Exception as e:
             logger.error(f"Error saving transaction: {e}")
-            raise
+            return False
