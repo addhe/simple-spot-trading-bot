@@ -20,10 +20,13 @@ class TradeManager:
                 LIMIT 500
             """
             cursor = self.db_manager.execute_query(query, (symbol,))
-            rows = cursor.fetchall()
+            if not cursor:
+                self.logger.error(f"Failed to get cursor for {symbol}")
+                return False
 
-            if len(rows) < 50:
-                self.logger.debug(f"{symbol}: Not enough historical data for analysis (only {len(rows)} records)")
+            rows = cursor.fetchall()
+            if not rows or len(rows) < 50:
+                self.logger.debug(f"{symbol}: Not enough historical data for analysis (only {len(rows) if rows else 0} records)")
                 return False
 
             # Convert to DataFrame
@@ -62,7 +65,7 @@ class TradeManager:
             # Get last buy price from database
             last_buy = self.db_manager.get_last_buy_price(symbol)
 
-            # If we have a position
+            # Get current position info
             if position_size and last_buy:
                 # Update highest price if needed
                 highest_price = self.db_manager.get_highest_price(symbol)
@@ -70,13 +73,12 @@ class TradeManager:
                     self.db_manager.update_highest_price(symbol, current_price)
                     highest_price = current_price
 
-                # Check take profit
+                # Check take profit and trailing stop
                 if self.check_take_profit(symbol, current_price, last_buy):
                     return "SELL"
-
-                # Check trailing stop
                 if self.check_trailing_stop(symbol, current_price, highest_price):
                     return "SELL"
+                return None
 
             # No position, check if we should buy
             elif not position_size and self.should_buy(symbol, current_price):

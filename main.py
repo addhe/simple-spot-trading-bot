@@ -98,35 +98,36 @@ class TradingBot:
             self.logger.error(f"Failed to initialize Binance client: {e}")
             raise
 
-    def process_symbol_trade(self, symbol, usdt_per_symbol, available_balance):
+    def process_symbol_trade(self, symbol, usdt_per_symbol, balances):
         """Process trades for configured trading pairs"""
         try:
-            # Get current market data
+            # Get current market price
             current_price = self.get_current_market_price(symbol)
             if not current_price:
                 self.logger.error(f"Could not get current price for {symbol}")
                 return
 
-            # Check if we have any position
-            balances = get_balances()
-            has_position, position_size = self.check_symbol_balance(symbol, balances)
+            # Check if we have any balance for this symbol
+            has_balance, position_size = self.check_symbol_balance(symbol, balances)
 
-            # Process existing position
-            if has_position:
-                action, quantity = self.trade_manager.process_trade(symbol, current_price, position_size)
-                if action == 'SELL':
-                    self.trade_manager.execute_sell(symbol, quantity)
-                    return
+            # Process trade decision
+            action = self.trade_manager.process_trade(symbol, current_price, position_size if has_balance else None)
 
-            # Check if we should buy
-            if self.should_buy(symbol, current_price):
-                quantity = self.calculate_position_size(symbol, current_price, usdt_per_symbol)
-                if quantity > 0:
-                    self.trade_manager.execute_buy(symbol, quantity)
+            if action == "SELL" and has_balance:
+                # Execute sell order
+                self.trade_manager.execute_sell(symbol, position_size)
+                self.logger.info(f"Sell order executed for {symbol}")
+
+            elif action == "BUY" and not has_balance:
+                # Calculate position size
+                buy_quantity = self.calculate_position_size(symbol, current_price, usdt_per_symbol)
+                if buy_quantity > 0:
+                    # Execute buy order
+                    self.trade_manager.execute_buy(symbol, buy_quantity)
+                    self.logger.info(f"Buy order executed for {symbol}")
 
         except Exception as e:
             self.logger.error(f"Error processing {symbol}: {e}")
-            self.error_counts[symbol] += 1
 
     def cleanup(self):
         """Cleanup resources"""
