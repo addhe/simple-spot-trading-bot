@@ -30,7 +30,8 @@ from config.settings import (
     MARKET_VOLATILITY_LIMIT,
     TRAILING_STOP,
     TAKE_PROFIT,
-    MIN_TRADE_AMOUNT
+    MIN_TRADE_AMOUNT,
+    MAX_INVESTMENT_PER_TRADE
 )
 
 from src.logger import logger
@@ -306,16 +307,41 @@ class TradingBot:
         """
         Calculate position size based on available balance and symbol configuration
         """
-        # Calculate potential quantity based on available USDT
-        potential_quantity = usdt_per_symbol / current_price
+        try:
+            # Get minimum trade amount for the symbol
+            min_trade = self.min_trade_amount.get(symbol, MIN_POSITION_SIZE)
 
-        # Validate minimum position size
-        min_position_size = self.min_position_sizes.get(symbol, MIN_POSITION_SIZE)
-        if potential_quantity < min_position_size:
-            self.logger.warning(f"Trade amount {potential_quantity} below minimum position size {min_position_size} for {symbol}")
+            # Calculate minimum USDT required
+            min_usdt_required = min_trade * current_price
+
+            # Calculate maximum position size based on available balance
+            max_position = min(usdt_per_symbol, MAX_INVESTMENT_PER_TRADE) / current_price
+
+            # If we can't meet minimum trade amount, skip
+            if max_position < min_trade:
+                self.logger.warning(
+                    f"Insufficient funds for {symbol}. "
+                    f"Required: {min_usdt_required:.2f} USDT, "
+                    f"Available per pair: {usdt_per_symbol:.2f} USDT"
+                )
+                return 0
+
+            # Get symbol precision
+            precision = SYMBOL_CONFIG[symbol]['quantity_precision']
+
+            # Round down to meet symbol precision
+            position_size = float(format(max_position, f'.{precision}f'))
+
+            self.logger.info(
+                f"Calculated position for {symbol}: {position_size} "
+                f"({position_size * current_price:.2f} USDT)"
+            )
+
+            return position_size
+
+        except Exception as e:
+            self.logger.error(f"Error calculating position size for {symbol}: {e}")
             return 0
-
-        return potential_quantity
 
     def trade(self):
         """Main trading loop"""

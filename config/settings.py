@@ -10,30 +10,22 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
 TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID_PROD', '')
 
 # Trading Pairs Configuration
-SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+SYMBOLS = ['ETHUSDT', 'SOLUSDT']
 
 # Minimum Trade Amount in Base Currency
 MIN_TRADE_AMOUNT = {
-    'BTCUSDT': 0.0001,  # Minimum BTC
     'ETHUSDT': 0.001,   # Minimum ETH
     'SOLUSDT': 0.1      # Minimum SOL
 }
 
 # Volume Requirements (adjusted for current market conditions)
 MIN_24H_VOLUME = {
-    'BTCUSDT': 14000,   # Adjusted from 500000
     'ETHUSDT': 10000,   # Adjusted from 200000
     'SOLUSDT': 5000     # Adjusted from 50000
 }
 
 # Symbol Info
 SYMBOL_CONFIG = {
-    'BTCUSDT': {
-        'base_asset': 'BTC',
-        'quote_asset': 'USDT',
-        'price_precision': 2,
-        'quantity_precision': 6
-    },
     'ETHUSDT': {
         'base_asset': 'ETH',
         'quote_asset': 'USDT',
@@ -49,49 +41,46 @@ SYMBOL_CONFIG = {
 }
 
 # Portfolio Management
-MAX_INVESTMENT_PER_TRADE = 10.00     # Increased max investment per trade
+MAX_INVESTMENT_PER_TRADE = 5.00      # Reduced max investment per trade
 PORTFOLIO_STOP_LOSS = 0.15          # Stop trading if portfolio drops 15%
-DAILY_LOSS_LIMIT = -0.03             # Stop trading if daily loss reaches 3%
+DAILY_LOSS_LIMIT = -0.03            # Stop trading if daily loss reaches 3%
 
 # Position Management
-STOP_LOSS_PERCENTAGE = 0.03         # 3% stop loss for quicker cut loss
+STOP_LOSS_PERCENTAGE = 0.02         # Reduced to 2% stop loss
 MIN_POSITION_SIZE = 0.0001          # Minimum position size for trades
-TRAILING_STOP = {                   # Custom trailing stop per pair
-    'BTCUSDT': 0.008,               # BTC more stable, 1.5% trailing stop
-    'ETHUSDT': 0.01,                # ETH moderate volatility, 2%
-    'SOLUSDT': 0.012                 # SOL more volatile, 3%
+TRAILING_STOP = {                   # Adjusted trailing stops
+    'ETHUSDT': 0.015,              # ETH 1.5% trailing stop
+    'SOLUSDT': 0.02                # SOL 2% trailing stop due to higher volatility
 }
 
 # Take Profit and Stop Loss Settings
 TAKE_PROFIT = {
-    'BTCUSDT': 0.015,  # 2% profit target
-    'ETHUSDT': 0.02,
-    'SOLUSDT': 0.025
+    'ETHUSDT': 0.025,              # 2.5% profit target for ETH
+    'SOLUSDT': 0.03                # 3% profit target for SOL
 }
 
 # Market Volatility Settings
 MARKET_VOLATILITY_LIMIT = {
-    'BTCUSDT': 0.20,  # 20% volatility limit
-    'ETHUSDT': 0.20,
-    'SOLUSDT': 0.20
+    'ETHUSDT': 0.20,               # 20% volatility limit
+    'SOLUSDT': 0.25                # 25% for SOL due to higher volatility
 }
 
 # Entry Strategy Parameters
-BUY_MULTIPLIER = 0.98              # 5% below market for better entry
-SELL_MULTIPLIER = 1.01             # 2% above market for better profit
-TOLERANCE = 0.02                   # Reduced for more precision
+BUY_MULTIPLIER = 0.985             # 1.5% below market for better entry
+SELL_MULTIPLIER = 1.005            # 0.5% above market for quicker profit
+TOLERANCE = 0.01                   # 1% tolerance for price movements
 MIN_VOLUME_MULTIPLIER = 1.0        # Minimum volume must be 1x average
 
 # Time Intervals
-INTERVAL = '15m'                    # 15-minute timeframe to reduce noise
-CACHE_LIFETIME = 60                 # 1 minute for faster response
-STATUS_INTERVAL = 1800              # 30 minutes for better monitoring
+INTERVAL = '5m'                    # Changed to 5-minute timeframe for quicker entries/exits
+CACHE_LIFETIME = 30                # 30 seconds for faster response
+STATUS_INTERVAL = 300              # 5 minutes for status updates
 
 # Trading Strategy Parameters
-RSI_OVERBOUGHT = 70  # RSI level for overbought condition
-RSI_OVERSOLD = 30    # RSI level for oversold condition
-BOLLINGER_WINDOW = 20 # Window for Bollinger Bands
-BOLLINGER_STD_DEV = 2 # Standard deviation for Bollinger Bands
+RSI_OVERBOUGHT = 75               # Increased RSI overbought level
+RSI_OVERSOLD = 25                 # Decreased RSI oversold level
+BOLLINGER_WINDOW = 20             # Window for Bollinger Bands
+BOLLINGER_STD_DEV = 2            # Standard deviation for Bollinger Bands
 
 # Technical Analysis Parameters
 RSI_PERIOD = 14
