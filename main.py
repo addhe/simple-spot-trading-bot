@@ -103,6 +103,10 @@ class TradingBot:
     def process_symbol_trade(self, symbol, usdt_per_symbol, balances):
         """Process trades for configured trading pairs"""
         try:
+            # Log current balances before checking
+            self.logger.debug(f"Current balances before checking: {balances}")
+            self.logger.debug(f"Balances dictionary state: {balances.__dict__}")
+
             # Get current market price
             current_price = self.get_current_market_price(symbol)
             if not current_price:

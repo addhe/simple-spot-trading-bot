@@ -37,6 +37,13 @@ def get_balances():
                     'locked': locked,
                     'total': free + locked
                 }
+
+        # Debug logging to capture balances retrieved
+        logger.info(f"Retrieved balances: {balances}")
+
+        # Debug logging to capture retrieved balances from Binance before returning them
+        logger.debug(f"Returning balances from Binance: {balances}")
+
         return balances
     except BinanceAPIException as e:
         logger.error(f"Failed to get balances: {e}")
