@@ -123,3 +123,16 @@ MAX_DATABASE_RETRIES = 3       # Maximum database connection retries
 
 # Persentase kenaikan harga jual
 SELL_THRESHOLD_PERCENTAGE = 0.02  # Persentase kenaikan harga untuk melakukan penjualan (5%)
+
+# Status Monitor Configuration
+DASHBOARD_HOST = '0.0.0.0'
+DASHBOARD_PORT = 8050
+UPDATE_INTERVAL = 60  # Update interval in seconds
+ALERT_THRESHOLDS = {
+    'cpu_usage': 80,
+    'memory_usage': 80,
+    'disk_usage': 80,
+    'win_rate': 0.3,
+    'drawdown': -0.05,
+    'volatility': 0.8
+}

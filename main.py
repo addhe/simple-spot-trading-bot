@@ -523,6 +523,23 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error sending status update: {e}")
 
+    def start(self):
+        """Start the trading bot"""
+        try:
+            # Initialize components
+            self.initialize_components()
+            
+            # Start status monitor
+            self.status_monitor = status_monitor
+            self.status_monitor.start(host='0.0.0.0', port=8050)
+            
+            # Start trading loop
+            self.trading_loop()
+            
+        except Exception as e:
+            self.logger.error(f"Error starting bot: {e}")
+            self.cleanup()
+
     def run(self):
         """Run the trading bot"""
         try:
@@ -600,7 +617,7 @@ def main():
             bot.simulate = True
             logger.info("Running in simulation mode")
 
-        bot.run()
+        bot.start()
 
     except Exception as e:
         logger.critical(f"Failed to start trading bot: {e}")

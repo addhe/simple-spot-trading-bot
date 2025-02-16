@@ -1,155 +1,342 @@
-import time
-from datetime import datetime
-import pytz
-from typing import Dict, Optional
-from config.settings import (
-    STATUS_INTERVAL,
-    DETAILED_LOGGING,
-    WIN_RATE_THRESHOLD,
-    PROFIT_FACTOR_THRESHOLD,
-    SYMBOLS
-)
-from .send_telegram_message import send_telegram_message
-from .get_balances import get_balances
-from .get_last_price import get_last_price
+import os
+import asyncio
+import psutil
+import pandas as pd
+import plotly.graph_objs as go
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+import dash
+from dash import html, dcc
+import dash_bootstrap_components as dbc
+from dash.dependencies import Input, Output
+from apscheduler.schedulers.background import BackgroundScheduler
+from src.logger import logger
+from src.database_manager import db_manager
+from src.monitoring import metrics
 
-def format_balance_change(current: float, previous: float) -> str:
-    """Format balance change with arrow indicators"""
-    if previous == 0:
-        return "🆕"
-    change = ((current - previous) / previous) * 100
-    if change > 0:
-        return f"↗️ +{change:.2f}%"
-    elif change < 0:
-        return f"↘️ {change:.2f}%"
-    return "→"
+class StatusMonitor:
+    def __init__(self, update_interval: int = 60):
+        self.update_interval = update_interval
+        self.scheduler = BackgroundScheduler()
+        self.market_conditions: Dict[str, str] = {}
+        self.system_metrics: Dict[str, float] = {}
+        self.trading_metrics: Dict[str, Dict] = {}
+        self.alerts: List[Dict] = []
+        
+        # Initialize Dash app
+        self.app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
+        self.setup_dashboard()
+        
+        # Start background jobs
+        self.scheduler.add_job(
+            self.update_metrics,
+            'interval',
+            seconds=update_interval
+        )
+        self.scheduler.start()
 
-def calculate_performance_metrics(trades):
-    """Calculate trading performance metrics"""
-    if not trades:
-        return None
+    def setup_dashboard(self):
+        """Setup Dash dashboard layout"""
+        self.app.layout = dbc.Container([
+            dbc.Row([
+                dbc.Col(html.H1("Trading Bot Dashboard", className="text-center mb-4"), width=12)
+            ]),
+            
+            # Alerts Section
+            dbc.Row([
+                dbc.Col(
+                    dbc.Card([
+                        dbc.CardHeader("Active Alerts"),
+                        dbc.CardBody(id="alerts-content")
+                    ]),
+                    width=12
+                )
+            ], className="mb-4"),
+            
+            # Market Overview
+            dbc.Row([
+                dbc.Col(
+                    dbc.Card([
+                        dbc.CardHeader("Market Overview"),
+                        dbc.CardBody([
+                            dcc.Graph(id="market-overview")
+                        ])
+                    ]),
+                    width=6
+                ),
+                
+                # Trading Performance
+                dbc.Col(
+                    dbc.Card([
+                        dbc.CardHeader("Trading Performance"),
+                        dbc.CardBody([
+                            dcc.Graph(id="trading-performance")
+                        ])
+                    ]),
+                    width=6
+                )
+            ], className="mb-4"),
+            
+            # System Metrics
+            dbc.Row([
+                dbc.Col(
+                    dbc.Card([
+                        dbc.CardHeader("System Metrics"),
+                        dbc.CardBody([
+                            dcc.Graph(id="system-metrics")
+                        ])
+                    ]),
+                    width=12
+                )
+            ]),
+            
+            dcc.Interval(
+                id='interval-component',
+                interval=self.update_interval * 1000,
+                n_intervals=0
+            )
+        ], fluid=True)
+        
+        self.setup_callbacks()
 
-    total_trades = len(trades)
-    winning_trades = len([t for t in trades if t['profit'] > 0])
-    win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
+    def setup_callbacks(self):
+        """Setup Dash callbacks for real-time updates"""
+        @self.app.callback(
+            [Output("alerts-content", "children"),
+             Output("market-overview", "figure"),
+             Output("trading-performance", "figure"),
+             Output("system-metrics", "figure")],
+            [Input("interval-component", "n_intervals")]
+        )
+        def update_dashboard(n):
+            return (
+                self.render_alerts(),
+                self.render_market_overview(),
+                self.render_trading_performance(),
+                self.render_system_metrics()
+            )
 
-    total_profit = sum([t['profit'] for t in trades if t['profit'] > 0])
-    total_loss = abs(sum([t['profit'] for t in trades if t['profit'] < 0]))
-    profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
+    async def update_metrics(self):
+        """Update all metrics"""
+        try:
+            await self.update_market_conditions()
+            await self.update_trading_metrics()
+            self.update_system_metrics()
+            await self.check_alerts()
+        except Exception as e:
+            logger.error(f"Error updating metrics: {str(e)}")
+            metrics.record_error("metrics_update")
 
-    return {
-        'total_trades': total_trades,
-        'win_rate': win_rate,
-        'profit_factor': profit_factor
-    }
+    async def update_market_conditions(self):
+        """Update market conditions for all symbols"""
+        try:
+            symbols = ['ETHUSDT', 'SOLUSDT']  # Add more symbols as needed
+            for symbol in symbols:
+                volatility = await self.calculate_volatility(symbol)
+                trend = await self.calculate_trend(symbol)
+                volume = await self.calculate_volume_profile(symbol)
+                
+                self.market_conditions[symbol] = {
+                    'volatility': volatility,
+                    'trend': trend,
+                    'volume': volume
+                }
+        except Exception as e:
+            logger.error(f"Error updating market conditions: {str(e)}")
 
-def status_monitor(bot):
-    """Monitor trading status and performance"""
-    try:
-        previous_balances: Dict[str, float] = {}
-        error_count = 0
-        max_errors = 3
-        error_sleep = 60  # Sleep 1 minute after error
+    async def calculate_volatility(self, symbol: str) -> str:
+        """Calculate market volatility"""
+        try:
+            data = await db_manager.get_market_data(
+                symbol,
+                datetime.utcnow() - timedelta(days=1),
+                datetime.utcnow()
+            )
+            
+            if not data:
+                return "Unknown"
+            
+            df = pd.DataFrame(data)
+            returns = df['close'].pct_change()
+            volatility = returns.std() * (252 ** 0.5)  # Annualized volatility
+            
+            if volatility > 0.8:
+                return "Extreme"
+            elif volatility > 0.5:
+                return "High"
+            elif volatility > 0.2:
+                return "Moderate"
+            else:
+                return "Low"
+        except Exception:
+            return "Unknown"
 
-        while bot.thread_status['status_thread']:
-            try:
-                # Get current balances and calculate total value
-                balances = get_balances()
-                if not balances:
-                    error_count += 1
-                    if error_count >= max_errors:
-                        bot.logger.error("Status monitor: Too many consecutive errors")
-                        bot.thread_status['status_thread'] = False
-                    time.sleep(error_sleep)
-                    continue
+    async def calculate_trend(self, symbol: str) -> str:
+        """Calculate market trend"""
+        try:
+            data = await db_manager.get_market_data(
+                symbol,
+                datetime.utcnow() - timedelta(days=1),
+                datetime.utcnow()
+            )
+            
+            if not data:
+                return "Unknown"
+            
+            df = pd.DataFrame(data)
+            sma_short = df['close'].rolling(window=20).mean()
+            sma_long = df['close'].rolling(window=50).mean()
+            
+            if sma_short.iloc[-1] > sma_long.iloc[-1] * 1.02:
+                return "Strong Uptrend"
+            elif sma_short.iloc[-1] > sma_long.iloc[-1]:
+                return "Uptrend"
+            elif sma_short.iloc[-1] < sma_long.iloc[-1] * 0.98:
+                return "Strong Downtrend"
+            elif sma_short.iloc[-1] < sma_long.iloc[-1]:
+                return "Downtrend"
+            else:
+                return "Sideways"
+        except Exception:
+            return "Unknown"
 
-                # Calculate total portfolio value
-                total_value = float(balances.get('USDT', {}).get('free', 0.0))
-                total_locked = float(balances.get('USDT', {}).get('locked', 0.0))
-                asset_values = []
+    async def calculate_volume_profile(self, symbol: str) -> str:
+        """Calculate volume profile"""
+        try:
+            data = await db_manager.get_market_data(
+                symbol,
+                datetime.utcnow() - timedelta(hours=24),
+                datetime.utcnow()
+            )
+            
+            if not data:
+                return "Unknown"
+            
+            df = pd.DataFrame(data)
+            avg_volume = df['volume'].mean()
+            current_volume = df['volume'].iloc[-1]
+            
+            if current_volume > avg_volume * 2:
+                return "Very High"
+            elif current_volume > avg_volume * 1.5:
+                return "High"
+            elif current_volume < avg_volume * 0.5:
+                return "Low"
+            else:
+                return "Normal"
+        except Exception:
+            return "Unknown"
 
-                # Process each trading pair
-                for symbol in SYMBOLS:
-                    asset = symbol.replace('USDT', '')
-                    if asset in balances:
-                        free_balance = float(balances[asset]['free'])
-                        locked_balance = float(balances[asset]['locked'])
-                        price = get_last_price(symbol)
+    async def update_trading_metrics(self):
+        """Update trading metrics"""
+        try:
+            for symbol in ['ETHUSDT', 'SOLUSDT']:  # Add more symbols as needed
+                trades = await db_manager.get_trade_history(symbol, limit=100)
+                if trades:
+                    df = pd.DataFrame(trades)
+                    
+                    self.trading_metrics[symbol] = {
+                        'total_trades': len(df),
+                        'win_rate': len(df[df['profit_loss'] > 0]) / len(df),
+                        'avg_profit': df[df['profit_loss'] > 0]['profit_loss'].mean(),
+                        'avg_loss': df[df['profit_loss'] < 0]['profit_loss'].mean(),
+                        'total_pnl': df['profit_loss'].sum()
+                    }
+        except Exception as e:
+            logger.error(f"Error updating trading metrics: {str(e)}")
 
-                        if price:
-                            asset_value = (free_balance + locked_balance) * price
-                            total_value += asset_value
+    def update_system_metrics(self):
+        """Update system metrics"""
+        try:
+            self.system_metrics = {
+                'cpu_usage': psutil.cpu_percent(),
+                'memory_usage': psutil.virtual_memory().percent,
+                'disk_usage': psutil.disk_usage('/').percent,
+                'network_io': sum(psutil.net_io_counters()[:2])
+            }
+        except Exception as e:
+            logger.error(f"Error updating system metrics: {str(e)}")
 
-                            # Calculate balance change
-                            previous_balance = previous_balances.get(asset, 0.0)
-                            change_indicator = format_balance_change(free_balance, previous_balance)
+    async def check_alerts(self):
+        """Check for alert conditions"""
+        try:
+            # Check system alerts
+            if self.system_metrics['cpu_usage'] > 80:
+                self.add_alert("High CPU Usage", "warning")
+            if self.system_metrics['memory_usage'] > 80:
+                self.add_alert("High Memory Usage", "warning")
+            
+            # Check market alerts
+            for symbol, conditions in self.market_conditions.items():
+                if conditions['volatility'] == "Extreme":
+                    self.add_alert(f"Extreme Volatility: {symbol}", "danger")
+                if conditions['volume'] == "Very High":
+                    self.add_alert(f"Unusual Volume: {symbol}", "warning")
+            
+            # Check trading alerts
+            for symbol, metrics in self.trading_metrics.items():
+                if metrics.get('win_rate', 0) < 0.3:
+                    self.add_alert(f"Low Win Rate: {symbol}", "danger")
+                if metrics.get('total_pnl', 0) < -0.05:  # 5% drawdown
+                    self.add_alert(f"High Drawdown: {symbol}", "danger")
+            
+        except Exception as e:
+            logger.error(f"Error checking alerts: {str(e)}")
 
-                            # Update balance history
-                            previous_balances[asset] = free_balance
+    def add_alert(self, message: str, level: str):
+        """Add a new alert"""
+        alert = {
+            'message': message,
+            'level': level,
+            'timestamp': datetime.utcnow()
+        }
+        self.alerts.append(alert)
+        
+        # Keep only last 100 alerts
+        if len(self.alerts) > 100:
+            self.alerts = self.alerts[-100:]
+        
+        # Log alert
+        logger.warning(f"Alert: {message}")
+        
+        # Send to monitoring system
+        metrics.record_alert(message, level)
 
-                            # Format balance string
-                            balance_str = (
-                                f"{asset}: {free_balance:.8f}"
-                                f" ({change_indicator})"
-                                f" [${asset_value:.2f}]"
-                            )
-                            if locked_balance > 0:
-                                balance_str += f" 🔒{locked_balance:.8f}"
-                            asset_values.append(balance_str)
+    def render_alerts(self):
+        """Render alerts for dashboard"""
+        alerts_list = []
+        for alert in reversed(self.alerts[-5:]):  # Show last 5 alerts
+            alerts_list.append(
+                dbc.Alert(
+                    f"{alert['timestamp'].strftime('%H:%M:%S')} - {alert['message']}",
+                    color=alert['level'],
+                    dismissable=True
+                )
+            )
+        return alerts_list
 
-                # Calculate performance metrics
-                metrics = calculate_performance_metrics(getattr(bot, 'trades', []))
+    def render_market_overview(self):
+        """Render market overview graph"""
+        # Implementation for market overview visualization
+        pass
 
-                # Format status message
-                current_time = datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')
+    def render_trading_performance(self):
+        """Render trading performance graph"""
+        # Implementation for trading performance visualization
+        pass
 
-                status_msg = [
-                    "📊 Trading Bot Status Report",
-                    f"⏰ {current_time} UTC",
-                    "",
-                    "💰 Portfolio Summary:",
-                    f"Total Value: ${total_value:.2f}",
-                    f"USDT Available: ${balances.get('USDT', {}).get('free', 0.0):.2f}",
-                    f"USDT Locked: ${total_locked:.2f}",
-                    "",
-                    "🔐 Asset Positions:"
-                ]
-                status_msg.extend(asset_values)
+    def render_system_metrics(self):
+        """Render system metrics graph"""
+        # Implementation for system metrics visualization
+        pass
 
-                if metrics and DETAILED_LOGGING:
-                    status_msg.extend([
-                        "",
-                        "📈 Performance Metrics:",
-                        f"Total Trades: {metrics['total_trades']}",
-                        f"Win Rate: {metrics['win_rate']:.2f}%",
-                        f"Profit Factor: {metrics['profit_factor']:.2f}"
-                    ])
+    def start(self, host: str = '0.0.0.0', port: int = 8050):
+        """Start the dashboard server"""
+        self.app.run_server(host=host, port=port)
 
-                    # Add performance warnings if needed
-                    if metrics['win_rate'] < WIN_RATE_THRESHOLD * 100:
-                        status_msg.append(f"⚠️ Win rate below threshold ({WIN_RATE_THRESHOLD*100}%)")
-                    if metrics['profit_factor'] < PROFIT_FACTOR_THRESHOLD:
-                        status_msg.append(f"⚠️ Profit factor below threshold ({PROFIT_FACTOR_THRESHOLD})")
+    def stop(self):
+        """Stop the status monitor"""
+        self.scheduler.shutdown()
 
-                # Send status message to Telegram
-                send_telegram_message("\n".join(status_msg))
-
-                # Reset error count on successful update
-                error_count = 0
-
-                # Sleep until next update
-                time.sleep(STATUS_INTERVAL)
-
-            except Exception as e:
-                bot.logger.error(f"Error in status monitor: {e}")
-                error_count += 1
-                if error_count >= max_errors:
-                    bot.logger.error("Status monitor: Too many consecutive errors")
-                    bot.thread_status['status_thread'] = False
-                time.sleep(error_sleep)
-
-    except Exception as e:
-        bot.logger.error(f"Critical error in status monitor: {e}")
-    finally:
-        # Make sure to close any open database connections in this thread
-        bot.db_manager.close_connection()
+# Initialize status monitor
+status_monitor = StatusMonitor()
