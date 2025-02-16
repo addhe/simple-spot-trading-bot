@@ -127,9 +127,23 @@ class TradingBot:
                     # Execute buy order
                     self.trade_manager.execute_buy(symbol, buy_quantity)
                     self.logger.info(f"Buy order executed for {symbol}")
+                else:
+                    self.send_no_trade_notification(symbol, "Insufficient funds to buy.")
+
+            else:
+                reason = "No action taken. "
+                if not has_balance:
+                    reason += "No balance available for trading."
+                elif action is None:
+                    reason += "Conditions for trading not met."
+                self.send_no_trade_notification(symbol, reason)
 
         except Exception as e:
             self.logger.error(f"Error processing {symbol}: {e}")
+
+    def send_no_trade_notification(self, symbol, reason):
+        message = f"📉 Trading Alert for {symbol}: {reason}"
+        send_telegram_message(message)
 
     def cleanup(self):
         """Cleanup resources"""
