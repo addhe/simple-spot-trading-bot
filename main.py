@@ -12,6 +12,7 @@ from binance.exceptions import BinanceAPIException, BinanceOrderException
 import argparse
 import requests
 import sys
+import logging
 
 from config.settings import (
     API_KEY,
@@ -45,8 +46,19 @@ class TradingBot:
     def __init__(self):
         """Initialize trading bot with configuration"""
         # Initialize logger
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)  # Set logger to DEBUG level
         self.logger.info("Initializing trading bot...")
+
+        # Configure logging
+        logging.basicConfig(
+            level=logging.DEBUG,  # Set root logger to DEBUG level
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler('logs/bot/bot.log'),
+                logging.StreamHandler()
+            ]
+        )
 
         # Initialize database manager
         self.db_manager = DatabaseManager('table_transactions.db')
@@ -208,10 +220,21 @@ class TradingBot:
         return False, 0
 
     def check_buy_balance(self, balances):
-        if 'USDT' in balances:
-            balance = balances['USDT']['free']
-            return (True, balance) if balance > 0 else (False, 0)
-        return False, 0
+        """Check if there is enough USDT balance for buying"""
+        self.logger.debug(f"Checking USDT balance in balances: {balances.get('USDT', {})}")
+        
+        if 'USDT' not in balances:
+            self.logger.debug("No USDT found in balances")
+            return False, 0
+            
+        usdt_balance = balances['USDT']['free']
+        self.logger.debug(f"Available USDT balance: {usdt_balance}")
+        
+        if usdt_balance <= 0:
+            self.logger.debug("USDT balance is zero or negative")
+            return False, 0
+            
+        return True, usdt_balance
 
     def check_sell_balance(self, symbol, balances):
         base_asset, _ = self.get_symbol_info(symbol)

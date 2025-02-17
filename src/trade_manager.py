@@ -46,14 +46,41 @@ class TradeManager:
 
             latest = df.iloc[0]  # Most recent data point
 
-            # Log the indicator values for debugging
-            self.logger.info(f"Latest indicators for {symbol} - MA_50: {latest['MA_50']}, MA_200: {latest['MA_200']}, RSI: {latest['RSI']}, BB_lower: {latest['BB_lower']}")
+            # Log all relevant indicators for debugging
+            self.logger.debug(f"Technical Analysis for {symbol}:")
+            self.logger.debug(f"Current Price: {current_price}")
+            self.logger.debug(f"BB Lower: {latest['BB_lower']}")
+            self.logger.debug(f"RSI: {latest['RSI']}")
+            self.logger.debug(f"MA_50: {latest['MA_50']}")
+            self.logger.debug(f"MA_200: {latest['MA_200']}")
+            self.logger.debug(f"MACD: {latest['MACD']}")
+            self.logger.debug(f"MACD Signal: {latest['MACD_signal']}")
 
-            # Decision logic for buying
-            if latest['close_price'] < latest['BB_lower'] and latest['RSI'] < 30:
-                return True  # Conditions for buying are met
+            # Relaxed decision logic for buying
+            # Buy if price is near BB lower band (within 1%) OR RSI is oversold
+            bb_lower_threshold = latest['BB_lower'] * 1.01  # Allow price to be 1% above lower band
+            rsi_oversold = 35  # Relaxed from 30 to 35
 
-            return False  # Conditions not met
+            if latest['close_price'] <= bb_lower_threshold:
+                self.logger.debug(f"{symbol}: Price near or below BB lower band")
+                if latest['RSI'] < rsi_oversold:
+                    self.logger.debug(f"{symbol}: RSI below {rsi_oversold}, conditions met for buying")
+                    return True
+                else:
+                    self.logger.debug(f"{symbol}: RSI not below {rsi_oversold}, checking MACD")
+                    # Additional buy condition: MACD crossover
+                    if latest['MACD'] > latest['MACD_signal']:
+                        self.logger.debug(f"{symbol}: MACD above signal line, conditions met for buying")
+                        return True
+            else:
+                self.logger.debug(f"{symbol}: Price not near BB lower band")
+
+            # Alternative buy condition: Strong oversold on RSI
+            if latest['RSI'] < 30:
+                self.logger.debug(f"{symbol}: Strong oversold condition (RSI < 30), conditions met for buying")
+                return True
+
+            return False
 
         except Exception as e:
             self.logger.error(f"Error in should_buy for {symbol}: {e}")
