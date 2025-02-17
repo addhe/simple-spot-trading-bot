@@ -63,7 +63,7 @@ class TradingBot:
         )
 
         # Initialize database manager
-        self.db_manager = DatabaseManager('table_transactions.db')
+        self.db_manager = DatabaseManager('trading_data.db')
         self.db_manager.initialize_database()  # Initialize database tables
 
         # Initialize Binance client
@@ -79,10 +79,6 @@ class TradingBot:
         for symbol in SYMBOL_CONFIG:
             self.historical_collector.collect_historical_data(symbol)
 
-        # Get initial balances
-        balances = get_balances()
-        self.available_balance = balances.get('USDT', {}).get('free', 0)
-
         # Initialize trading pairs and parameters
         self.trading_pairs = list(SYMBOL_CONFIG.keys())
         self.min_trade_amount = MIN_TRADE_AMOUNT
@@ -92,19 +88,18 @@ class TradingBot:
         self.trailing_stop = TRAILING_STOP
         self.take_profit = TAKE_PROFIT
 
-        # Initialize database and calculate initial value
-        initial_value = self.calculate_total_value(balances)
-        self.logger.info(f"Initial portfolio value: {initial_value} USDT")
-        self.logger.info(f"Initialized trading pairs: {self.trading_pairs}")
+        # Initialize balances
+        self.update_balances()
 
         # Initialize thread status and error tracking
         self.thread_status = {
             'main_thread': True,
-            'status_thread': True,
-            'cleanup_thread': True
+            'error_thread': True
         }
-        self.error_counts = {symbol: 0 for symbol in self.trading_pairs}
-        self.MAX_ERRORS = 3
+        self.error_count = 0
+        self.last_error_time = None
+        self.logger.info(f"Initialized trading pairs: {self.trading_pairs}")
+        self.logger.info("Trading bot initialized successfully")
 
     def initialize_client(self):
         """Initialize Binance client"""
@@ -120,6 +115,22 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Failed to initialize Binance client: {e}")
             raise
+
+    def update_balances(self):
+        """Update current balances"""
+        try:
+            self.balances = get_balances(self.client)
+            if self.balances:
+                self.logger.info(f"Retrieved balances: {self.balances}")
+                initial_value = self.calculate_total_value(self.balances)
+                self.logger.info(f"Current portfolio value: {initial_value} USDT")
+                return True
+            else:
+                self.logger.error("Failed to get balances")
+                return False
+        except Exception as e:
+            self.logger.error(f"Error updating balances: {e}")
+            return False
 
     def process_symbol_trade(self, symbol, usdt_per_symbol, balances):
         """Process trades for configured trading pairs"""
@@ -422,88 +433,73 @@ class TradingBot:
         return round(position_size, 4)
 
     def trade(self):
-        """Main trading loop"""
+        """Execute trading strategy"""
         try:
-            while self.thread_status['main_thread']:
+            # Update balances first
+            if not self.update_balances():
+                self.logger.error("Failed to update balances, skipping trade cycle")
+                return
+
+            for symbol in self.trading_pairs:
                 try:
-                    # Update recent historical data
-                    self.historical_collector.update_recent_data(self.trading_pairs)
-                    
-                    # Get current balances
-                    balances = get_balances()
-                    if not balances:
-                        self.logger.error("Failed to fetch balances")
-                        time.sleep(10)
+                    # Get current market price
+                    current_price = self.get_current_market_price(symbol)
+                    if not current_price:
                         continue
 
-                    # Update available balance
-                    self.available_balance = balances.get('USDT', {}).get('free', 0)
-
-                    # Calculate USDT per symbol
-                    active_pairs = len(self.trading_pairs)
-                    usdt_per_symbol = self.available_balance / active_pairs if active_pairs > 0 else 0
-
-                    # Process each trading pair
-                    for symbol in self.trading_pairs:
-                        try:
-                            self.process_symbol_trade(symbol, usdt_per_symbol, balances)
-                        except Exception as e:
-                            self.handle_symbol_error(symbol, e)
-                            continue
-
-                    # Sleep between iterations
-                    time.sleep(10)
+                    # Get trading decision
+                    decision = self.trade_manager.process_trade(symbol, current_price)
+                    
+                    if decision == "BUY":
+                        # Calculate position size based on available USDT
+                        usdt_balance = float(self.balances.get('USDT', {}).get('free', 0))
+                        position_size = min(usdt_balance * 0.95, MAX_INVESTMENT_PER_TRADE) / current_price
+                        
+                        if position_size * current_price >= MIN_TRADE_AMOUNT:
+                            if self.trade_manager.execute_buy(symbol, position_size):
+                                self.update_balances()  # Update balances after successful trade
+                        else:
+                            self.logger.info(f"Position size too small for {symbol}")
+                    
+                    elif decision == "SELL":
+                        base_asset = SYMBOL_CONFIG[symbol]['base_asset']
+                        position_size = float(self.balances.get(base_asset, {}).get('free', 0))
+                        
+                        if position_size * current_price >= MIN_TRADE_AMOUNT:
+                            if self.trade_manager.execute_sell(symbol, position_size):
+                                self.update_balances()  # Update balances after successful trade
+                        else:
+                            self.logger.info(f"Position size too small for {symbol}")
 
                 except Exception as e:
-                    self.logger.error(f"Error in trade loop: {e}")
-                    time.sleep(10)
+                    self.logger.error(f"Error processing {symbol}: {e}")
+                    self.error_count += 1
+                    self.last_error_time = time.time()
+                    
+                    if self.error_count >= 3:
+                        self.logger.error(f"Disabling trading for {symbol} due to excessive errors")
+                        send_telegram_message(f"⚠️ Trading disabled for {symbol} due to excessive errors")
+                        if symbol in self.trading_pairs:
+                            self.trading_pairs.remove(symbol)
 
         except Exception as e:
-            self.logger.error(f"Critical error in trade function: {e}")
-        finally:
-            # Make sure to close any open database connections in this thread
+            self.logger.error(f"Error in trade function: {e}")
+
+    def cleanup(self):
+        """Cleanup resources"""
+        try:
+            # Cancel any pending orders
+            for symbol in SYMBOL_CONFIG:
+                try:
+                    self.client.cancel_open_orders(symbol=symbol)
+                except Exception:
+                    pass  # Ignore errors during cleanup
+
+            # Close database connection
             self.db_manager.close_connection()
 
-    def cleanup_old_data(self):
-        """Clean up historical data older than 24 hours"""
-        try:
-            query = '''
-                DELETE FROM historical_data
-                WHERE timestamp < datetime('now', '-24 hours', 'localtime')
-            '''
-            self.db_manager.execute_query(query)
-            self.logger.info("Successfully cleaned up old historical data")
         except Exception as e:
-            self.logger.error(f"Failed to clean up historical data: {e}")
-            raise
-
-    def cleanup_monitor(self):
-        """Monitor thread for cleaning up old data"""
-        error_count = 0
-        max_errors = 3
-        error_sleep = 60  # Sleep 1 minute after error
-        cleanup_interval = 3600  # Run cleanup every hour
-
-        while self.thread_status['cleanup_thread']:
-            try:
-                # Attempt database cleanup
-                self.cleanup_old_data()
-                # Reset error count on successful cleanup
-                error_count = 0
-
-                # Sleep until next cleanup
-                time.sleep(cleanup_interval)
-
-            except Exception as e:
-                self.logger.error(f"Error in cleanup monitor: {e}")
-                error_count += 1
-
-                if error_count >= max_errors:
-                    self.logger.error("Cleanup monitor: Too many consecutive errors")
-                    self.thread_status['cleanup_thread'] = False
-                    break
-
-                time.sleep(error_sleep)
+            self.logger.error(f"Error during cleanup: {e}")
 
     def check_app_status(self):
         """Monitor application status"""
