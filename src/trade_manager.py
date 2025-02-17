@@ -22,6 +22,7 @@ class TradeManager:
 
             # Convert to DataFrame
             df = pd.DataFrame(rows, columns=['timestamp', 'close_price', 'volume'])
+            df = df.sort_values('timestamp', ascending=True).reset_index(drop=True)
 
             # Calculate basic indicators
             df['MA_50'] = df['close_price'].rolling(window=50).mean()
@@ -35,7 +36,9 @@ class TradeManager:
             df['MACD'], df['MACD_signal'] = self._calculate_macd(df['close_price'])
             df['MACD_hist'] = df['MACD'] - df['MACD_signal']
 
-            latest = df.iloc[0]  # Most recent data point
+            # Get the latest data point and previous point
+            latest = df.iloc[-1]  # Most recent data point
+            previous = df.iloc[-2] if len(df) > 1 else latest  # Previous data point
 
             # Log all relevant indicators for debugging
             self.logger.debug(f"Technical Analysis for {symbol}:")
@@ -67,7 +70,7 @@ class TradeManager:
                 self.logger.debug(f" RSI not oversold ({latest['RSI']:.2f} >= {rsi_oversold})")
 
             # 3. MACD momentum (weight: 1)
-            if latest['MACD_hist'] > latest['MACD_hist'].shift(1).iloc[0]:
+            if latest['MACD_hist'] > previous['MACD_hist']:
                 buy_signals += 1
                 self.logger.debug(" MACD momentum is positive")
             else:
@@ -137,11 +140,25 @@ class TradeManager:
 
     def _calculate_macd(self, prices, fast=12, slow=26, signal=9):
         """Calculate MACD indicator"""
-        exp1 = prices.ewm(span=fast, adjust=False).mean()
-        exp2 = prices.ewm(span=slow, adjust=False).mean()
-        macd = exp1 - exp2
-        signal_line = macd.ewm(span=signal, adjust=False).mean()
-        return macd, signal_line
+        try:
+            # Convert to float if needed
+            prices = prices.astype(float)
+
+            # Calculate MACD
+            exp1 = prices.ewm(span=fast, adjust=False).mean()
+            exp2 = prices.ewm(span=slow, adjust=False).mean()
+            macd = exp1 - exp2
+            signal_line = macd.ewm(span=signal, adjust=False).mean()
+
+            # Handle NaN values
+            macd = macd.fillna(0)
+            signal_line = signal_line.fillna(0)
+
+            return macd, signal_line
+        except Exception as e:
+            self.logger.error(f"Error calculating MACD: {e}")
+            # Return zeros with same length as input
+            return pd.Series([0] * len(prices)), pd.Series([0] * len(prices))
 
     def check_take_profit(self, symbol, current_price, buy_price):
         """Check if we should take profit"""
