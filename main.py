@@ -39,10 +39,10 @@ from config.settings import (
 
 from src.logger import logger
 from src.get_balances import get_balances
-from src.database_manager import DatabaseManager
+from src.db_manager import DatabaseManager
 from src.trade_manager import TradeManager
 from src.send_telegram_message import send_telegram_message
-from src.historical_data_collector import HistoricalDataCollector
+from src.historical_data import HistoricalDataCollector
 
 class TradingBot:
     def __init__(self):

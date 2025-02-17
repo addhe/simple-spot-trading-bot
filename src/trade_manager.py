@@ -12,19 +12,8 @@ class TradeManager:
     def should_buy(self, symbol, current_price):
         """Determine whether to buy based on technical analysis"""
         try:
-            query = """
-                SELECT timestamp, close_price, volume
-                FROM historical_data
-                WHERE symbol = ?
-                ORDER BY timestamp DESC
-                LIMIT 500
-            """
-            cursor = self.db_manager.execute_query(query, (symbol,))
-            if not cursor:
-                self.logger.error(f"Failed to get cursor for {symbol}")
-                return False
-
-            rows = cursor.fetchall()
+            # Get historical data from database
+            rows = self.db_manager.get_historical_data(symbol, limit=500)
             if not rows or len(rows) < 50:
                 self.logger.debug(f"{symbol}: Not enough historical data for analysis (only {len(rows) if rows else 0} records)")
                 return False
