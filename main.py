@@ -122,36 +122,41 @@ class TradingBot:
                 self.logger.error(f"Could not get current price for {symbol}")
                 return
 
-            # Check USDT balance first
+            # Get asset info
+            base_asset, _ = self.get_symbol_info(symbol)
+            
+            # Check balances
             has_usdt, usdt_balance = self.check_buy_balance(balances)
-            self.logger.debug(f"USDT Balance Check - Available: ${usdt_balance:.2f}, Sufficient: {has_usdt}")
-
-            # Check base asset balance
             has_asset, asset_balance = self.check_sell_balance(symbol, balances)
-            self.logger.debug(f"{symbol} Balance Check - Available: {asset_balance}, Sufficient: {has_asset}")
+            
+            self.logger.debug(f"Balance Check for {symbol}:")
+            self.logger.debug(f"USDT - Available: ${usdt_balance:.2f}, Sufficient: {has_usdt}")
+            self.logger.debug(f"{base_asset} - Available: {asset_balance}, Sufficient: {has_asset}")
 
             # Get buy/sell decision
             buy_decision = self.trade_manager.should_buy(symbol, current_price)
             self.logger.debug(f"Buy decision for {symbol}: {buy_decision}")
 
             # Determine trade action based on balances and decision
-            if buy_decision and has_usdt:
-                # Calculate buy quantity based on available USDT
-                buy_quantity = self.calculate_position_size(symbol, current_price, usdt_balance)
-                if buy_quantity > 0:
-                    self.logger.info(f"Executing buy order for {symbol}: {buy_quantity} @ ${current_price:.2f}")
-                    self.trade_manager.execute_buy(symbol, buy_quantity)
+            if buy_decision:
+                if has_usdt:
+                    # Calculate buy quantity based on available USDT
+                    buy_quantity = self.calculate_position_size(symbol, current_price, usdt_balance)
+                    if buy_quantity > 0:
+                        self.logger.info(f"Executing buy order for {symbol}: {buy_quantity} @ ${current_price:.2f}")
+                        self.trade_manager.execute_buy(symbol, buy_quantity)
+                    else:
+                        self.send_no_trade_notification(symbol, f"Calculated buy quantity too small")
                 else:
-                    self.send_no_trade_notification(symbol, f"Calculated buy quantity too small")
-            elif not buy_decision and has_asset:
-                # Execute sell if we have the asset and conditions favor selling
-                self.logger.info(f"Executing sell order for {symbol}: {asset_balance} @ ${current_price:.2f}")
-                self.trade_manager.execute_sell(symbol, asset_balance)
-            else:
-                if buy_decision:
                     self.send_no_trade_notification(symbol, f"Insufficient USDT balance (${usdt_balance:.2f}) for buying")
+            else:
+                # Only attempt to sell if we actually own the asset
+                if has_asset and asset_balance > 0:
+                    self.logger.info(f"Executing sell order for {symbol}: {asset_balance} @ ${current_price:.2f}")
+                    self.trade_manager.execute_sell(symbol, asset_balance)
                 else:
-                    self.send_no_trade_notification(symbol, f"Insufficient {symbol} balance ({asset_balance}) for selling")
+                    # Don't send notification if we don't own the asset and aren't trying to buy
+                    self.logger.debug(f"No {base_asset} balance to sell and conditions don't favor buying")
 
         except Exception as e:
             self.logger.error(f"Error processing trade for {symbol}: {e}")
