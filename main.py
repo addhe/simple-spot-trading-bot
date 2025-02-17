@@ -33,7 +33,8 @@ from config.settings import (
     TAKE_PROFIT,
     MIN_TRADE_AMOUNT,
     MAX_INVESTMENT_PER_TRADE,
-    RSI_OVERSOLD
+    RSI_OVERSOLD,
+    MIN_USDT_BALANCE
 )
 
 from src.logger import logger
@@ -227,13 +228,16 @@ class TradingBot:
             self.logger.debug("No USDT found in balances")
             return False, 0
             
-        usdt_balance = balances['USDT']['free']
+        usdt_balance = float(balances['USDT']['free'])
         self.logger.debug(f"Available USDT balance: {usdt_balance}")
         
-        if usdt_balance <= 0:
-            self.logger.debug("USDT balance is zero or negative")
+        # Check if balance meets minimum requirements
+        min_required = MIN_USDT_BALANCE  
+        if usdt_balance < min_required:
+            self.logger.debug(f"USDT balance ({usdt_balance}) below minimum required ({min_required})")
             return False, 0
             
+        self.logger.debug(f"USDT balance ({usdt_balance}) is sufficient for trading")
         return True, usdt_balance
 
     def check_sell_balance(self, symbol, balances):
@@ -313,7 +317,7 @@ class TradingBot:
             conn.close()
 
             if len(df) < 50:
-                self.logger.debug(f"{symbol}: Data historis tidak cukup untuk analisis (hanya {len(df)} data)")
+                self.logger.debug(f"{symbol}: Not enough historical data for analysis (only {len(df)} records)")
                 return False
 
             # Calculate basic indicators
@@ -330,46 +334,54 @@ class TradingBot:
 
             latest = df.iloc[-1]
 
-            # Log the indicator values for debugging
-            self.logger.info(f"Latest indicators for {symbol} - MA_50: {latest['MA_50']}, MA_200: {latest['MA_200']}, RSI: {latest['RSI']}, BB_lower: {latest['BB_lower']}")
+            # Log all indicators for debugging
+            self.logger.debug(f"Technical Analysis for {symbol}:")
+            self.logger.debug(f"Current Price: ${current_price:.2f}")
+            self.logger.debug(f"MA50: ${latest['MA_50']:.2f}")
+            self.logger.debug(f"MA200: ${latest['MA_200']:.2f}")
+            self.logger.debug(f"RSI: {latest['RSI']:.2f}")
+            self.logger.debug(f"BB Lower: ${latest['BB_lower']:.2f}")
+            self.logger.debug(f"MACD Histogram: {latest['MACD_hist']:.4f}")
 
-            # Enhanced decision logic for buying
+            # Enhanced decision logic with more lenient conditions
             buy_signals = 0
+            required_signals = 2  # Reduced from 3 to make it more sensitive
 
             # RSI oversold condition (weight: 2)
             if latest['RSI'] < RSI_OVERSOLD:
                 buy_signals += 2
-                self.logger.info(f"{symbol} RSI oversold: {latest['RSI']:.2f}")
+                self.logger.debug(f"✅ RSI is oversold ({latest['RSI']:.2f} < {RSI_OVERSOLD})")
+            else:
+                self.logger.debug(f"❌ RSI not oversold ({latest['RSI']:.2f} >= {RSI_OVERSOLD})")
 
-            # Price below lower Bollinger Band (weight: 2)
-            if latest['close_price'] < latest['BB_lower']:
+            # Price near or below lower Bollinger Band (weight: 2)
+            bb_threshold = latest['BB_lower'] * 1.01  # Allow price to be slightly above BB lower
+            if current_price <= bb_threshold:
                 buy_signals += 2
-                self.logger.info(f"{symbol} Below BB: {latest['close_price']:.2f} < {latest['BB_lower']:.2f}")
+                self.logger.debug(f"✅ Price near/below BB lower (${current_price:.2f} <= ${bb_threshold:.2f})")
+            else:
+                self.logger.debug(f"❌ Price above BB lower (${current_price:.2f} > ${bb_threshold:.2f})")
 
-            # MACD crossover (weight: 1)
-            if df['MACD_hist'].iloc[-1] > 0 and df['MACD_hist'].iloc[-2] < 0:
+            # MACD momentum (weight: 1)
+            if df['MACD_hist'].iloc[-1] > df['MACD_hist'].iloc[-2]:
                 buy_signals += 1
-                self.logger.info(f"{symbol} MACD crossover")
+                self.logger.debug("✅ MACD momentum is positive")
+            else:
+                self.logger.debug("❌ MACD momentum is negative")
 
-            # Price below MA50 but above MA200 (weight: 1)
-            if latest['close_price'] < latest['MA_50'] and latest['close_price'] > latest['MA_200']:
+            # Price between MAs (weight: 1)
+            if current_price > latest['MA_200'] and current_price < latest['MA_50']:
                 buy_signals += 1
-                self.logger.info(f"{symbol} Between MAs")
+                self.logger.debug(f"✅ Price between MA200 and MA50")
+            else:
+                self.logger.debug(f"❌ Price not between MA200 and MA50")
 
-            # Volume spike (weight: 1)
-            avg_volume = df['volume'].rolling(window=20).mean().iloc[-1]
-            if latest['volume'] > avg_volume * 1.5:
-                buy_signals += 1
-                self.logger.info(f"{symbol} Volume spike: {latest['volume']:.2f} > {avg_volume:.2f}")
-
-            # Need at least 3 buy signals to enter
-            should_buy = buy_signals >= 3
-            if should_buy:
-                self.logger.info(f"Buy signals triggered for {symbol}: {buy_signals} signals")
-
+            should_buy = buy_signals >= required_signals
+            self.logger.info(f"{symbol} Buy Decision: {should_buy} (Signals: {buy_signals}/{required_signals})")
             return should_buy
+
         except Exception as e:
-            self.logger.error(f"Error in should_buy for {symbol}: {e}")
+            self.logger.error(f"Error in should_buy for {symbol}: {str(e)}")
             return False
 
     def _calculate_bollinger_bands(self, prices, window=20, num_std=2):
