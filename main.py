@@ -103,37 +103,36 @@ class TradingBot:
     def process_symbol_trade(self, symbol, usdt_per_symbol, balances):
         """Process trades for configured trading pairs"""
         try:
-            # Log current balances before checking
-            self.logger.debug(f"Current balances before checking: {balances}")
-
-            # Log the balances dictionary state correctly
-            self.logger.debug(f"Balances dictionary state: {balances}")
-
-            # Get current market price
             current_price = self.get_current_market_price(symbol)
             if not current_price:
                 self.logger.error(f"Could not get current price for {symbol}")
                 return
 
-            # Pass current_price to check_symbol_balance
-            has_balance, position_size = self.check_symbol_balance(symbol, balances, current_price)
-            action = self.trade_manager.process_trade(symbol, current_price, position_size if has_balance else None)
+            # Decide if conditions favor buy
+            buy_decision = self.trade_manager.should_buy(symbol, current_price)
+            if buy_decision:
+                has_balance, available_balance = self.check_buy_balance(balances)
+            else:
+                has_balance, available_balance = self.check_sell_balance(symbol, balances)
+
+            # Determine the trade action
+            action = self.trade_manager.process_trade(symbol, current_price, available_balance if has_balance else None)
 
             if action == "SELL" and has_balance:
-                # Execute sell order
-                self.trade_manager.execute_sell(symbol, position_size)
-                self.logger.info(f"Sell order executed for {symbol}")
-
-            elif action == "BUY" and not has_balance:
-                # Calculate position size
-                buy_quantity = self.calculate_position_size(symbol, current_price, usdt_per_symbol)
+                # Use check_sell_balance to confirm base asset balance
+                sell_balance_check, sell_balance = self.check_sell_balance(symbol, balances)
+                if sell_balance_check:
+                    self.trade_manager.execute_sell(symbol, sell_balance)
+                    self.logger.info(f"Sell order executed for {symbol}")
+                else:
+                    self.send_no_trade_notification(symbol, "No balance available for selling.")
+            elif action == "BUY" and has_balance:
+                buy_quantity = self.calculate_position_size(symbol, current_price, available_balance)
                 if buy_quantity > 0:
-                    # Execute buy order
                     self.trade_manager.execute_buy(symbol, buy_quantity)
                     self.logger.info(f"Buy order executed for {symbol}")
                 else:
                     self.send_no_trade_notification(symbol, "Insufficient funds to buy.")
-
             else:
                 reason = "No action taken. "
                 if not has_balance:
@@ -195,6 +194,19 @@ class TradingBot:
         relevant_asset = quote_asset if should_buy else base_asset
         if relevant_asset in balances:
             balance = balances[relevant_asset]['free']
+            return (True, balance) if balance > 0 else (False, 0)
+        return False, 0
+
+    def check_buy_balance(self, balances):
+        if 'USDT' in balances:
+            balance = balances['USDT']['free']
+            return (True, balance) if balance > 0 else (False, 0)
+        return False, 0
+
+    def check_sell_balance(self, symbol, balances):
+        base_asset, _ = self.get_symbol_info(symbol)
+        if base_asset in balances:
+            balance = balances[base_asset]['free']
             return (True, balance) if balance > 0 else (False, 0)
         return False, 0
 
