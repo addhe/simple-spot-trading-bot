@@ -111,15 +111,14 @@ class TradingBot:
             # Decide if conditions favor buy
             buy_decision = self.trade_manager.should_buy(symbol, current_price)
             if buy_decision:
-                has_balance, available_balance = self.check_buy_balance(balances)
+                has_balance, available_balance = self.check_buy_balance(balances)  # Check USDT balance
             else:
-                has_balance, available_balance = self.check_sell_balance(symbol, balances)
+                has_balance, available_balance = self.check_sell_balance(symbol, balances)  # Check base asset balance
 
             # Determine the trade action
             action = self.trade_manager.process_trade(symbol, current_price, available_balance if has_balance else None)
 
             if action == "SELL" and has_balance:
-                # Use check_sell_balance to confirm base asset balance
                 sell_balance_check, sell_balance = self.check_sell_balance(symbol, balances)
                 if sell_balance_check:
                     self.trade_manager.execute_sell(symbol, sell_balance)
