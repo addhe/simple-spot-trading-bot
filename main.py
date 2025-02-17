@@ -42,6 +42,7 @@ from src.get_balances import get_balances
 from src.database_manager import DatabaseManager
 from src.trade_manager import TradeManager
 from src.send_telegram_message import send_telegram_message
+from src.historical_data_collector import HistoricalDataCollector
 
 class TradingBot:
     def __init__(self):
@@ -67,8 +68,15 @@ class TradingBot:
         # Initialize Binance client
         self.initialize_client()
 
+        # Initialize historical data collector
+        self.historical_collector = HistoricalDataCollector(self.client, self.db_manager)
+
         # Initialize trade manager
         self.trade_manager = TradeManager(self.db_manager, self.client)
+
+        # Collect initial historical data
+        for symbol in SYMBOL_CONFIG:
+            self.historical_collector.collect_historical_data(symbol)
 
         # Get initial balances
         balances = get_balances()
@@ -305,9 +313,9 @@ class TradingBot:
                         total_value += asset_value
                         self.logger.info(f"Added {base_symbol} value: {asset_value} USDT")
                 else:
-                    self.logger.debug(f"Zero balance for {base_symbol}")
+                    self.logger.debug(f"Zero balance for {base_asset}")
             else:
-                self.logger.debug(f"No balance entry for {base_symbol}")
+                self.logger.debug(f"No balance entry for {base_asset}")
 
         return total_value
 
@@ -423,6 +431,9 @@ class TradingBot:
         try:
             while self.thread_status['main_thread']:
                 try:
+                    # Update recent historical data
+                    self.historical_collector.update_recent_data(self.trading_pairs)
+                    
                     # Get current balances
                     balances = get_balances()
                     if not balances:
