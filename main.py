@@ -146,6 +146,11 @@ class TradingBot:
                     reason += "Conditions for trading not met."
                 self.send_no_trade_notification(symbol, reason)
 
+            # Additional debug logging
+            self.logger.debug(f"Balance check for {symbol}: {has_balance}")
+            self.logger.debug(f"Available balance for {symbol}: {available_balance}")
+            self.logger.debug(f"Trade action for {symbol}: {action}")
+
         except Exception as e:
             self.logger.error(f"Error processing {symbol}: {e}")
 
