@@ -48,39 +48,50 @@ class TradeManager:
 
             # Log all relevant indicators for debugging
             self.logger.debug(f"Technical Analysis for {symbol}:")
-            self.logger.debug(f"Current Price: {current_price}")
-            self.logger.debug(f"BB Lower: {latest['BB_lower']}")
-            self.logger.debug(f"RSI: {latest['RSI']}")
-            self.logger.debug(f"MA_50: {latest['MA_50']}")
-            self.logger.debug(f"MA_200: {latest['MA_200']}")
-            self.logger.debug(f"MACD: {latest['MACD']}")
-            self.logger.debug(f"MACD Signal: {latest['MACD_signal']}")
+            self.logger.debug(f"Current Price: ${current_price:.2f}")
+            self.logger.debug(f"BB Lower: ${latest['BB_lower']:.2f}")
+            self.logger.debug(f"RSI: {latest['RSI']:.2f}")
+            self.logger.debug(f"MA_50: ${latest['MA_50']:.2f}")
+            self.logger.debug(f"MA_200: ${latest['MA_200']:.2f}")
+            self.logger.debug(f"MACD Hist: {latest['MACD_hist']:.4f}")
 
-            # Relaxed decision logic for buying
-            # Buy if price is near BB lower band (within 1%) OR RSI is oversold
-            bb_lower_threshold = latest['BB_lower'] * 1.01  # Allow price to be 1% above lower band
-            rsi_oversold = 35  # Relaxed from 30 to 35
+            # More lenient buy conditions
+            buy_signals = 0
+            required_signals = 2  # Need at least 2 signals to buy
 
-            if latest['close_price'] <= bb_lower_threshold:
-                self.logger.debug(f"{symbol}: Price near or below BB lower band")
-                if latest['RSI'] < rsi_oversold:
-                    self.logger.debug(f"{symbol}: RSI below {rsi_oversold}, conditions met for buying")
-                    return True
-                else:
-                    self.logger.debug(f"{symbol}: RSI not below {rsi_oversold}, checking MACD")
-                    # Additional buy condition: MACD crossover
-                    if latest['MACD'] > latest['MACD_signal']:
-                        self.logger.debug(f"{symbol}: MACD above signal line, conditions met for buying")
-                        return True
+            # 1. Price near Bollinger Band lower (weight: 2)
+            bb_lower_threshold = latest['BB_lower'] * 1.02  # Allow price to be 2% above lower band
+            if current_price <= bb_lower_threshold:
+                buy_signals += 2
+                self.logger.debug(f" Price near/below BB lower (${current_price:.2f} <= ${bb_lower_threshold:.2f})")
             else:
-                self.logger.debug(f"{symbol}: Price not near BB lower band")
+                self.logger.debug(f" Price above BB lower (${current_price:.2f} > ${bb_lower_threshold:.2f})")
 
-            # Alternative buy condition: Strong oversold on RSI
-            if latest['RSI'] < 30:
-                self.logger.debug(f"{symbol}: Strong oversold condition (RSI < 30), conditions met for buying")
-                return True
+            # 2. RSI conditions (weight: 2)
+            rsi_oversold = 40  # More lenient RSI threshold
+            if latest['RSI'] < rsi_oversold:
+                buy_signals += 2
+                self.logger.debug(f" RSI oversold ({latest['RSI']:.2f} < {rsi_oversold})")
+            else:
+                self.logger.debug(f" RSI not oversold ({latest['RSI']:.2f} >= {rsi_oversold})")
 
-            return False
+            # 3. MACD momentum (weight: 1)
+            if latest['MACD_hist'] > latest['MACD_hist'].shift(1).iloc[0]:
+                buy_signals += 1
+                self.logger.debug(" MACD momentum is positive")
+            else:
+                self.logger.debug(" MACD momentum is negative")
+
+            # 4. Moving Average alignment (weight: 1)
+            if current_price > latest['MA_200'] and current_price < latest['MA_50']:
+                buy_signals += 1
+                self.logger.debug(f" Price between MA200 and MA50")
+            else:
+                self.logger.debug(f" Price not between MA200 and MA50")
+
+            should_buy = buy_signals >= required_signals
+            self.logger.info(f"{symbol} Buy Decision: {should_buy} (Signals: {buy_signals}/{required_signals})")
+            return should_buy
 
         except Exception as e:
             self.logger.error(f"Error in should_buy for {symbol}: {e}")
