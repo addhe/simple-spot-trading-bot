@@ -115,10 +115,8 @@ class TradingBot:
                 self.logger.error(f"Could not get current price for {symbol}")
                 return
 
-            # Check if we have any balance for this symbol
-            has_balance, position_size = self.check_symbol_balance(symbol, balances)
-
-            # Process trade decision
+            # Pass current_price to check_symbol_balance
+            has_balance, position_size = self.check_symbol_balance(symbol, balances, current_price)
             action = self.trade_manager.process_trade(symbol, current_price, position_size if has_balance else None)
 
             if action == "SELL" and has_balance:
@@ -190,12 +188,11 @@ class TradingBot:
             return f"{symbol}USDT"
         return symbol
 
-    def check_symbol_balance(self, symbol, balances):
+    def check_symbol_balance(self, symbol, balances, current_price):
         base_asset, quote_asset = self.get_symbol_info(symbol)
-
-        # Determine relevant asset based on trade direction
-        relevant_asset = quote_asset if self.trade_manager.should_buy() else base_asset
-
+        # Now pass symbol and current_price to should_buy()
+        should_buy = self.trade_manager.should_buy(symbol, current_price)
+        relevant_asset = quote_asset if should_buy else base_asset
         if relevant_asset in balances:
             balance = balances[relevant_asset]['free']
             return (True, balance) if balance > 0 else (False, 0)
