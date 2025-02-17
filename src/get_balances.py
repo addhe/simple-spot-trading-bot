@@ -17,34 +17,28 @@ client = Client(api_key=API_KEY, api_secret=API_SECRET)
 if BASE_URL:
     client.API_URL = BASE_URL
 
-def get_balances():
-    """
-    Get account balances from Binance
-    Returns: dict with 'USDT' and other asset balances
-    """
+def get_balances(client):
+    """Get current balances from Binance"""
     try:
-        account = client.get_account()
+        # Get account information
+        account_info = client.get_account()
+        
+        # Filter and format balances
         balances = {}
-
-        for balance in account['balances']:
-            asset = balance['asset']
-            free = float(balance['free'])
-            locked = float(balance['locked'])
-
-            if free > 0 or locked > 0:  # Only store assets with balance
-                balances[asset] = {
+        for asset in account_info['balances']:
+            free = float(asset['free'])
+            locked = float(asset['locked'])
+            total = free + locked
+            
+            # Only include assets with non-zero balance
+            if total > 0:
+                balances[asset['asset']] = {
                     'free': free,
                     'locked': locked,
-                    'total': free + locked
+                    'total': total
                 }
-
-        # Debug logging to capture balances retrieved
-        logger.info(f"Retrieved balances: {balances}")
-
-        # Debug logging to capture retrieved balances from Binance before returning them
-        logger.debug(f"Returning balances from Binance: {balances}")
-
+        
         return balances
-    except BinanceAPIException as e:
-        logger.error(f"Failed to get balances: {e}")
-        return {}
+    except Exception as e:
+        logger.error(f"Error getting balances: {e}")
+        return None

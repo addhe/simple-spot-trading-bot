@@ -7,13 +7,14 @@ class DatabaseManager:
     def __init__(self, db_path='trading_data.db'):
         self.db_path = db_path
         self.logger = logger
+        self.conn = None
         self.initialize_database()
 
     def initialize_database(self):
         """Initialize database with required tables"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            self.conn = sqlite3.connect(self.db_path)
+            cursor = self.conn.cursor()
 
             # Create historical data table
             cursor.execute('''
@@ -43,8 +44,7 @@ class DatabaseManager:
                 )
             ''')
 
-            conn.commit()
-            conn.close()
+            self.conn.commit()
             self.logger.info("Database initialized successfully")
         except Exception as e:
             self.logger.error(f"Error initializing database: {e}")
@@ -52,8 +52,7 @@ class DatabaseManager:
     def store_historical_data(self, symbol, klines):
         """Store historical kline data"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            cursor = self.conn.cursor()
 
             for kline in klines:
                 cursor.execute('''
@@ -70,8 +69,7 @@ class DatabaseManager:
                     float(kline[5])   # volume
                 ))
 
-            conn.commit()
-            conn.close()
+            self.conn.commit()
             self.logger.debug(f"Stored {len(klines)} historical data points for {symbol}")
         except Exception as e:
             self.logger.error(f"Error storing historical data: {e}")
@@ -79,8 +77,7 @@ class DatabaseManager:
     def get_historical_data(self, symbol, limit=500):
         """Get historical data for analysis"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            cursor = self.conn.cursor()
             
             cursor.execute('''
                 SELECT timestamp, close_price, volume
@@ -91,7 +88,6 @@ class DatabaseManager:
             ''', (symbol, limit))
             
             data = cursor.fetchall()
-            conn.close()
             return data
         except Exception as e:
             self.logger.error(f"Error retrieving historical data: {e}")
@@ -100,8 +96,7 @@ class DatabaseManager:
     def record_trade(self, symbol, side, price, quantity):
         """Record a trade in the database"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            cursor = self.conn.cursor()
             
             cursor.execute('''
                 INSERT INTO trades (symbol, side, price, quantity, timestamp, status)
@@ -115,8 +110,7 @@ class DatabaseManager:
                 'executed'
             ))
             
-            conn.commit()
-            conn.close()
+            self.conn.commit()
             self.logger.info(f"Recorded {side} trade for {symbol}: {quantity} @ {price}")
         except Exception as e:
             self.logger.error(f"Error recording trade: {e}")
@@ -124,8 +118,7 @@ class DatabaseManager:
     def get_last_trade(self, symbol):
         """Get the last trade for a symbol"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            cursor = self.conn.cursor()
             
             cursor.execute('''
                 SELECT side, price, quantity, timestamp
@@ -136,8 +129,20 @@ class DatabaseManager:
             ''', (symbol,))
             
             trade = cursor.fetchone()
-            conn.close()
             return trade
         except Exception as e:
             self.logger.error(f"Error getting last trade: {e}")
             return None
+
+    def close_connection(self):
+        """Close the database connection"""
+        try:
+            if hasattr(self, 'conn') and self.conn:
+                self.conn.close()
+                self.logger.info("Database connection closed successfully")
+        except Exception as e:
+            self.logger.error(f"Error closing database connection: {e}")
+
+    def __del__(self):
+        """Destructor to ensure connection is closed"""
+        self.close_connection()

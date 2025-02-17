@@ -485,129 +485,37 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error in trade function: {e}")
 
-    def cleanup(self):
-        """Cleanup resources"""
-        try:
-            # Cancel any pending orders
-            for symbol in SYMBOL_CONFIG:
-                try:
-                    self.client.cancel_open_orders(symbol=symbol)
-                except Exception:
-                    pass  # Ignore errors during cleanup
-
-            # Close database connection
-            self.db_manager.close_connection()
-
-        except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}")
-
-    def check_app_status(self):
-        """Monitor application status"""
-        while self.thread_status['status_thread']:
-            if not all(self.thread_status.values()):
-                self.logger.error("One or more threads are inactive!")
-                send_telegram_message("⚠️ Warning: System degraded - check application status")
-            time.sleep(600)
-
-    def send_status_update(self):
-        """Send status update via Telegram"""
-        try:
-            balances = get_balances()
-            if not balances:
-                self.logger.error("Failed to fetch balances")
-                return
-
-            total_value = self.calculate_total_value(balances)
-
-            # Format timestamp
-            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-            # Create message header
-            message = f"📊 Trading Bot Status Report\n"
-            message += f"⏰ {timestamp} UTC\n\n"
-
-            # Add portfolio summary
-            message += "💰 Portfolio Summary:\n"
-            message += f"Total Value: ${total_value:.2f}\n"
-            usdt_balance = balances.get('USDT', {}).get('free', 0)
-            message += f"USDT Available: ${usdt_balance:.2f}\n"
-            message += f"USDT Locked: ${balances.get('USDT', {}).get('locked', 0):.2f}\n\n"
-
-            # Add asset positions
-            message += "🔐 Asset Positions:\n"
-            for symbol in self.trading_pairs:
-                base_asset, _ = self.get_symbol_info(symbol)
-                if base_asset in balances:
-                    free_balance = float(balances[base_asset].get('free', 0))
-                    locked_balance = float(balances[base_asset].get('locked', 0))
-                    if free_balance > 0 or locked_balance > 0:
-                        # Get current price
-                        current_price = self.get_current_market_price(symbol)
-                        if current_price:
-                            value_usdt = (free_balance + locked_balance) * current_price
-                            message += f"{base_asset}: {free_balance:.8f}"
-                            if locked_balance > 0:
-                                message += f" (🔒 {locked_balance:.8f})"
-                            message += f" [${value_usdt:.2f}]\n"
-                            message += f"Current Price: ${current_price:.2f}\n"
-
-            # Add market conditions
-            message += "\n📈 Market Conditions:\n"
-            for symbol in self.trading_pairs:
-                try:
-                    ticker = self.client.get_ticker(symbol=symbol)
-                    volume_24h = float(ticker['volume'])
-                    price_change = float(ticker['priceChangePercent'])
-                    message += f"{symbol}:\n"
-                    message += f"24h Volume: ${volume_24h:.2f}\n"
-                    message += f"24h Change: {price_change:+.2f}%\n"
-                except Exception as e:
-                    self.logger.error(f"Error getting market data for {symbol}: {e}")
-
-            send_telegram_message(message)
-
-        except Exception as e:
-            self.logger.error(f"Error sending status update: {e}")
-
     def run(self):
         """Run the trading bot"""
         try:
-            # Start trading threads
-            trade_thread = threading.Thread(target=self.trade)
-            status_monitor_thread = threading.Thread(target=status_monitor, args=(self,))
-            status_thread = threading.Thread(target=self.check_app_status)
-            cleanup_thread = threading.Thread(target=self.cleanup_monitor)
-
-            threads = [trade_thread, status_monitor_thread, status_thread, cleanup_thread]
-
-            for thread in threads:
-                thread.daemon = True
-                thread.start()
-
-            # Send initial status update
-            self.send_status_update()
-
-            # Keep main thread alive
+            self.logger.info("Starting trading bot...")
             while self.thread_status['main_thread']:
-                time.sleep(1)
-
-        except KeyboardInterrupt:
-            self.logger.info("Shutting down gracefully...")
-            self.thread_status['main_thread'] = False
-            self.thread_status['status_thread'] = False
-
-            # Wait for threads to finish
-            for thread in threads:
-                thread.join()
-
+                try:
+                    self.trade()
+                    time.sleep(10)  # Wait 10 seconds between iterations
+                except Exception as e:
+                    self.logger.error(f"Error in main loop: {e}")
+                    time.sleep(10)  # Wait before retrying
         except Exception as e:
-            self.logger.critical(f"Fatal error: {e}")
-            self.thread_status['main_thread'] = False
-            self.thread_status['status_thread'] = False
-
+            self.logger.error(f"Fatal error in run: {e}")
         finally:
+            self.shutdown()
+
+    def shutdown(self):
+        """Shutdown the bot gracefully"""
+        try:
+            self.logger.info("Initiating bot shutdown...")
+            
+            # Stop all threads
+            for key in self.thread_status:
+                self.thread_status[key] = False
+            
+            # Cleanup resources
             self.cleanup()
+            
             self.logger.info("Bot shutdown complete")
+        except Exception as e:
+            self.logger.error(f"Error during shutdown: {e}")
 
     def _check_internet_connection(self):
         """Check if internet connection is available"""
@@ -647,10 +555,17 @@ def main():
             logger.info("Running in simulation mode")
 
         bot.run()
-
     except Exception as e:
         logger.critical(f"Failed to start trading bot: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    try:
+        bot = TradingBot()
+        bot.run()
+    except KeyboardInterrupt:
+        bot.shutdown()
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}")
+        if hasattr(bot, 'shutdown'):
+            bot.shutdown()
