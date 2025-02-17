@@ -1,36 +1,20 @@
 # Simple Spot Trading Bot  
   
-Simple Spot Trading Bot adalah bot trading yang dirancang untuk melakukan perdagangan di pasar spot menggunakan Binance API. Bot ini memanfaatkan strategi berbasis analisis harga untuk menentukan waktu yang optimal untuk membeli dan menjual aset.  
+Simple Spot Trading Bot adalah bot trading yang dirancang untuk melakukan perdagangan di pasar spot menggunakan Binance API. Bot ini memanfaatkan strategi berbasis analisis teknikal dan manajemen risiko untuk melakukan trading cryptocurrency secara otomatis.
   
 ---  
   
 ## Fitur  
   
-- **Trading Otomatis**: Melakukan pembelian dan penjualan secara otomatis berdasarkan strategi yang telah ditentukan.  
-- **Pengaturan Dinamis**: Menghitung harga beli dan jual secara dinamis berdasarkan data historis.  
-- **Notifikasi Telegram**: Mengirim notifikasi melalui Telegram saat transaksi dilakukan.  
-- **Log Rotasi**: Mengelola file log dengan rotasi otomatis untuk menjaga ukuran file log tetap terkendali.  
-- **Manajemen Risiko**: Mengatur stop loss dan take profit untuk mengendalikan risiko perdagangan.  
-- **Multi-Pasangan Mata Uang**: Mendukung beberapa pasangan mata uang seperti BTC/USDT, ETH/USDT, dan SOL/USDT.  
-
----
-
-## Ringkasan
-### bot.py
-Mengatur dan mengendalikan seluruh operasi bot trading, termasuk:
-- Menyimpan dan memuat data terkini dan historis.
-- Menjalankan transaksi beli dan jual.
-- Mengatur stop loss dan take profit.
-- Logging dan notifikasi.
-
-### strategy.py
-Mengatur logika dan strategi trading, termasuk:
-- Mengambil dan mengolah data historis harga.
-- Menghitung harga beli dan jual dinamis.
-- Mengatur manajemen risiko.
-- Logging.
-
-Kedua file bot.py dan strategy.py adalah bagian penting dari bot trading ini, yang bekerja sama untuk mengimplementasikan strategi trading yang efektif.
+- **Trading Otomatis**: Melakukan pembelian dan penjualan secara otomatis berdasarkan strategi yang telah ditentukan
+- **Analisis Teknikal**: Menggunakan indikator RSI untuk analisis market
+- **Manajemen Risiko**: Mengatur stop loss dan take profit untuk mengendalikan risiko perdagangan
+- **Monitoring Real-time**: Pemantauan pasar dan status trading secara real-time
+- **Database Integration**: Pencatatan dan tracking semua transaksi dalam database
+- **Notifikasi Telegram**: Mengirim notifikasi melalui Telegram untuk setiap aktivitas trading
+- **Position Sizing**: Perhitungan ukuran posisi trading yang optimal
+- **Multi-Pair Trading**: Mendukung trading multiple cryptocurrency pairs
+- **Performance Tracking**: Pelacakan dan analisis performa trading
 
 ---
 
@@ -39,22 +23,61 @@ Kedua file bot.py dan strategy.py adalah bagian penting dari bot trading ini, ya
 ```
 simple-spot-trading-bot/  
 │  
-├── src/  
-│   ├── bot.py                 # Kode utama untuk bot trading  
-│   ├── check_price.py         # Fungsi untuk memeriksa harga dan strategi trading  
-│   ├── strategy.py            # Implementasi strategi trading  
-│   └── notifikasi_telegram.py # Modul untuk mengirim notifikasi melalui Telegram  
+├── src/                           # Direktori source code  
+│   ├── trade_manager.py          # Mengelola logika trading utama
+│   ├── database_manager.py       # Menangani operasi database
+│   ├── status_monitor.py         # Memantau status bot
+│   ├── market_operations.py      # Menangani operasi pasar
+│   ├── trade_operations.py       # Menangani operasi trading
+│   ├── send_telegram_message.py  # Mengirim notifikasi Telegram
+│   ├── calculate_position_size.py # Menghitung ukuran posisi
+│   ├── _calculate_rsi.py         # Menghitung indikator RSI
+│   ├── handle_stop_loss.py       # Menangani stop loss
+│   ├── get_balances.py          # Mengambil informasi saldo
+│   ├── performance_tracking.py   # Melacak performa trading
+│   ├── risk_management.py       # Mengelola risiko trading
+│   └── utils/                   # Utilitas pendukung
 │  
 ├── config/  
-│   ├── config.py              # Konfigurasi untuk bot  
-│   └── settings.py            # Pengaturan API dan parameter lainnya  
+│   └── settings.py              # Konfigurasi dan parameter bot
 │  
-├── historical_data.pkl        # Data historis untuk analisis  
-├── latest_activity.pkl        # Menyimpan aktivitas terbaru bot  
-├── bot.log                    # File log untuk mencatat aktivitas bot  
-└── main.py                    # Entry point untuk menjalankan bot  
-
+└── main.py                      # Entry point dan implementasi TradingBot class
 ```
+
+---
+
+## Komponen Utama
+
+### 1. TradingBot Class (main.py)
+- Kelas utama yang mengatur seluruh operasi trading
+- Menginisialisasi koneksi ke Binance API
+- Mengatur manajemen database dan monitoring
+- Mengelola sesi trading dan error handling
+
+### 2. Trade Manager (trade_manager.py)
+- Implementasi logika trading utama
+- Pengambilan keputusan beli/jual
+- Eksekusi order dan manajemen posisi
+
+### 3. Database Manager (database_manager.py)
+- Pengelolaan database transaksi
+- Pencatatan historical data
+- Tracking performa trading
+
+### 4. Market Operations (market_operations.py)
+- Interaksi dengan Binance API
+- Pengambilan data market
+- Eksekusi order market
+
+### 5. Risk Management (risk_management.py)
+- Implementasi stop loss dan take profit
+- Perhitungan position sizing
+- Manajemen risiko portfolio
+
+### 6. Performance Tracking (performance_tracking.py)
+- Analisis performa trading
+- Perhitungan metrics
+- Reporting dan monitoring
 
 ---
 
@@ -69,7 +92,7 @@ cd simple-spot-trading-bot
 
 ### 2. Instal Dependensi
 
-Pastikan Python 3.x telah terinstal, kemudian jalankan perintah berikut:
+Pastikan Python 3.x telah terinstal, kemudian jalankan:
 
 ```bash
 pip install -r requirements.txt
@@ -77,32 +100,34 @@ pip install -r requirements.txt
 
 ### 3. Konfigurasi
 
-- Edit file `config/settings.py` untuk menambahkan API Key dan Secret Key dari Binance.
-- Sesuaikan parameter lainnya sesuai kebutuhan Anda.
+1. Copy `config/settings.example.py` ke `config/settings.py`
+2. Edit `config/settings.py` dan atur:
+   - API Key dan Secret Key Binance
+   - Token dan Group ID Telegram
+   - Parameter trading (RSI, multiplier, dll)
+   - Konfigurasi trading pairs
 
 ---
 
 ## Penggunaan
 
-Untuk menjalankan bot, gunakan perintah berikut:
+Untuk menjalankan bot:
 
 ```bash
 python main.py
 ```
 
-Bot akan berjalan dan melakukan trading berdasarkan strategi yang telah ditentukan.
-
----
-
-## Log Rotasi
-
-Bot ini menggunakan mekanisme rotasi log otomatis untuk menjaga ukuran file log tetap terkendali. Pastikan Anda telah mengatur konfigurasi log sesuai kebutuhan.
+Bot akan:
+1. Menginisialisasi koneksi ke Binance
+2. Memulai monitoring market
+3. Melakukan trading berdasarkan strategi yang dikonfigurasi
+4. Mengirim notifikasi via Telegram untuk setiap aktivitas
 
 ---
 
 ## Kontribusi
 
-Kami menyambut kontribusi Anda! Jika Anda ingin berkontribusi, silakan buat pull request atau buka issue untuk diskusi lebih lanjut.
+Kami menyambut kontribusi! Silakan buat pull request atau buka issue untuk diskusi lebih lanjut.
 
 ---
 
