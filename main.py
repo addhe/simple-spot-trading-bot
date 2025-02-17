@@ -116,56 +116,46 @@ class TradingBot:
     def process_symbol_trade(self, symbol, usdt_per_symbol, balances):
         """Process trades for configured trading pairs"""
         try:
+            # Get current market price
             current_price = self.get_current_market_price(symbol)
             if not current_price:
                 self.logger.error(f"Could not get current price for {symbol}")
                 return
 
-            # Decide if conditions favor buy
+            # Check USDT balance first
+            has_usdt, usdt_balance = self.check_buy_balance(balances)
+            self.logger.debug(f"USDT Balance Check - Available: ${usdt_balance:.2f}, Sufficient: {has_usdt}")
+
+            # Check base asset balance
+            has_asset, asset_balance = self.check_sell_balance(symbol, balances)
+            self.logger.debug(f"{symbol} Balance Check - Available: {asset_balance}, Sufficient: {has_asset}")
+
+            # Get buy/sell decision
             buy_decision = self.trade_manager.should_buy(symbol, current_price)
             self.logger.debug(f"Buy decision for {symbol}: {buy_decision}")
 
-            if buy_decision:
-                has_balance, available_balance = self.check_buy_balance(balances)  # Check USDT balance
-                self.logger.debug(f"Available USDT balance for buying {symbol}: {available_balance}")
-            else:
-                has_balance, available_balance = self.check_sell_balance(symbol, balances)  # Check base asset balance
-                self.logger.debug(f"Available balance for selling {symbol}: {available_balance}")
-
-            # Determine the trade action
-            action = self.trade_manager.process_trade(symbol, current_price, available_balance if has_balance else None)
-
-            self.logger.debug(f"Trade action for {symbol}: {action}")
-
-            if action == "SELL" and has_balance:
-                sell_balance_check, sell_balance = self.check_sell_balance(symbol, balances)
-                if sell_balance_check:
-                    self.trade_manager.execute_sell(symbol, sell_balance)
-                    self.logger.info(f"Sell order executed for {symbol}")
-                else:
-                    self.send_no_trade_notification(symbol, "No balance available for selling.")
-            elif action == "BUY" and has_balance:
-                buy_quantity = self.calculate_position_size(symbol, current_price, available_balance)
+            # Determine trade action based on balances and decision
+            if buy_decision and has_usdt:
+                # Calculate buy quantity based on available USDT
+                buy_quantity = self.calculate_position_size(symbol, current_price, usdt_balance)
                 if buy_quantity > 0:
+                    self.logger.info(f"Executing buy order for {symbol}: {buy_quantity} @ ${current_price:.2f}")
                     self.trade_manager.execute_buy(symbol, buy_quantity)
-                    self.logger.info(f"Buy order executed for {symbol}")
                 else:
-                    self.send_no_trade_notification(symbol, "Insufficient funds to buy.")
+                    self.send_no_trade_notification(symbol, f"Calculated buy quantity too small")
+            elif not buy_decision and has_asset:
+                # Execute sell if we have the asset and conditions favor selling
+                self.logger.info(f"Executing sell order for {symbol}: {asset_balance} @ ${current_price:.2f}")
+                self.trade_manager.execute_sell(symbol, asset_balance)
             else:
-                reason = "No action taken. "
-                if not has_balance:
-                    reason += "No balance available for trading."
-                elif action is None:
-                    reason += "Conditions for trading not met."
-                self.send_no_trade_notification(symbol, reason)
-
-            # Additional debug logging
-            self.logger.debug(f"Balance check for {symbol}: {has_balance}")
-            self.logger.debug(f"Available balance for {symbol}: {available_balance}")
-            self.logger.debug(f"Trade action for {symbol}: {action}")
+                if buy_decision:
+                    self.send_no_trade_notification(symbol, f"Insufficient USDT balance (${usdt_balance:.2f}) for buying")
+                else:
+                    self.send_no_trade_notification(symbol, f"Insufficient {symbol} balance ({asset_balance}) for selling")
 
         except Exception as e:
-            self.logger.error(f"Error processing {symbol}: {e}")
+            self.logger.error(f"Error processing trade for {symbol}: {e}")
+            self.handle_symbol_error(symbol, e)
 
     def send_no_trade_notification(self, symbol, reason):
         message = f"📉 Trading Alert for {symbol}: {reason}"
@@ -229,23 +219,37 @@ class TradingBot:
             return False, 0
             
         usdt_balance = float(balances['USDT']['free'])
-        self.logger.debug(f"Available USDT balance: {usdt_balance}")
+        self.logger.debug(f"Available USDT balance: ${usdt_balance:.2f}")
         
         # Check if balance meets minimum requirements
-        min_required = MIN_USDT_BALANCE  
+        min_required = MAX_INVESTMENT_PER_TRADE  # Use max investment as minimum required
         if usdt_balance < min_required:
-            self.logger.debug(f"USDT balance ({usdt_balance}) below minimum required ({min_required})")
-            return False, 0
+            self.logger.debug(f"USDT balance (${usdt_balance:.2f}) below minimum required (${min_required:.2f})")
+            return False, usdt_balance
             
-        self.logger.debug(f"USDT balance ({usdt_balance}) is sufficient for trading")
+        self.logger.debug(f"USDT balance (${usdt_balance:.2f}) is sufficient for trading")
         return True, usdt_balance
 
     def check_sell_balance(self, symbol, balances):
+        """Check if there is enough base asset balance for selling"""
         base_asset, _ = self.get_symbol_info(symbol)
-        if base_asset in balances:
-            balance = balances[base_asset]['free']
-            return (True, balance) if balance > 0 else (False, 0)
-        return False, 0
+        self.logger.debug(f"Checking {base_asset} balance in balances: {balances.get(base_asset, {})}")
+        
+        if base_asset not in balances:
+            self.logger.debug(f"No {base_asset} found in balances")
+            return False, 0
+            
+        asset_balance = float(balances[base_asset]['free'])
+        self.logger.debug(f"Available {base_asset} balance: {asset_balance}")
+        
+        # Check if balance meets minimum requirements
+        min_required = MIN_TRADE_AMOUNT.get(symbol, 0)
+        if asset_balance < min_required:
+            self.logger.debug(f"{base_asset} balance ({asset_balance}) below minimum required ({min_required})")
+            return False, asset_balance
+            
+        self.logger.debug(f"{base_asset} balance ({asset_balance}) is sufficient for trading")
+        return True, asset_balance
 
     def get_symbol_info(self, symbol):
         """
