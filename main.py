@@ -110,10 +110,14 @@ class TradingBot:
 
             # Decide if conditions favor buy
             buy_decision = self.trade_manager.should_buy(symbol, current_price)
+            self.logger.debug(f"Buy decision for {symbol}: {buy_decision}")
+
             if buy_decision:
                 has_balance, available_balance = self.check_buy_balance(balances)  # Check USDT balance
+                self.logger.debug(f"Available USDT balance for buying {symbol}: {available_balance}")
             else:
                 has_balance, available_balance = self.check_sell_balance(symbol, balances)  # Check base asset balance
+                self.logger.debug(f"Available balance for selling {symbol}: {available_balance}")
 
             # Determine the trade action
             action = self.trade_manager.process_trade(symbol, current_price, available_balance if has_balance else None)
