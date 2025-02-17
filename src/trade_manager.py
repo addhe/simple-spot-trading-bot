@@ -91,33 +91,41 @@ class TradeManager:
             self.logger.error(f"Error in should_buy for {symbol}: {e}")
             return False
 
-    def process_trade(self, symbol, current_price, position_size=None):
+    def process_trade(self, symbol, current_price):
         """Process a single trade with take profit and trailing stop"""
         try:
-            # Get last buy price from database
-            last_buy = self.db_manager.get_last_buy_price(symbol)
-
-            # Get current position info
-            if position_size and last_buy:
-                # Update highest price if needed
+            # Get last buy price and current position
+            last_buy_price = self.db_manager.get_last_buy_price(symbol)
+            
+            # Check if we have an open position
+            if last_buy_price:
+                # Get highest price since buy
                 highest_price = self.db_manager.get_highest_price(symbol)
+                
+                # Update highest price if current price is higher
                 if current_price > highest_price:
                     self.db_manager.update_highest_price(symbol, current_price)
                     highest_price = current_price
-
+                
                 # Check take profit and trailing stop
-                if self.check_take_profit(symbol, current_price, last_buy):
+                if self.check_take_profit(symbol, current_price, last_buy_price):
+                    self.logger.info(f"Take profit triggered for {symbol}")
                     return "SELL"
+                    
                 if self.check_trailing_stop(symbol, current_price, highest_price):
+                    self.logger.info(f"Trailing stop triggered for {symbol}")
                     return "SELL"
+                    
+                self.logger.debug(f"Holding {symbol} position. Entry: {last_buy_price}, Current: {current_price}, Highest: {highest_price}")
                 return None
-
+            
             # No position, check if we should buy
-            elif not position_size and self.should_buy(symbol, current_price):
+            if self.should_buy(symbol, current_price):
+                self.logger.info(f"Buy signal for {symbol} at {current_price}")
                 return "BUY"
-
+            
             return None
-
+            
         except Exception as e:
             self.logger.error(f"Error processing trade for {symbol}: {e}")
             return None

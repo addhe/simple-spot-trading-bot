@@ -134,6 +134,78 @@ class DatabaseManager:
             self.logger.error(f"Error getting last trade: {e}")
             return None
 
+    def get_last_buy_price(self, symbol):
+        """Get the last buy price for a symbol"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT price
+                FROM trades
+                WHERE symbol = ? AND side = 'BUY'
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ''', (symbol,))
+            
+            result = cursor.fetchone()
+            return float(result[0]) if result else None
+        except Exception as e:
+            self.logger.error(f"Error getting last buy price for {symbol}: {e}")
+            return None
+
+    def get_highest_price(self, symbol):
+        """Get the highest price reached since last buy"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT MAX(close_price)
+                FROM historical_data
+                WHERE symbol = ? AND timestamp > (
+                    SELECT MAX(timestamp)
+                    FROM trades
+                    WHERE symbol = ? AND side = 'BUY'
+                )
+            ''', (symbol, symbol))
+            
+            result = cursor.fetchone()
+            return float(result[0]) if result and result[0] else 0
+        except Exception as e:
+            self.logger.error(f"Error getting highest price for {symbol}: {e}")
+            return 0
+
+    def update_highest_price(self, symbol, price):
+        """Update the highest price for a symbol"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO historical_data
+                (symbol, timestamp, close_price, volume)
+                VALUES (?, datetime('now'), ?, 0)
+            ''', (symbol, price))
+            
+            self.conn.commit()
+            self.logger.debug(f"Updated highest price for {symbol} to {price}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error updating highest price for {symbol}: {e}")
+            return False
+
+    def save_transaction(self, symbol, side, quantity, price):
+        """Save a trade transaction"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                INSERT INTO trades
+                (symbol, side, quantity, price, timestamp, status)
+                VALUES (?, ?, ?, ?, datetime('now'), 'FILLED')
+            ''', (symbol, side, quantity, price))
+            
+            self.conn.commit()
+            self.logger.info(f"Saved {side} transaction for {symbol}: {quantity} @ {price}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error saving transaction: {e}")
+            return False
+
     def close_connection(self):
         """Close the database connection"""
         try:
