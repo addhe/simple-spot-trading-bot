@@ -122,6 +122,8 @@ class TradingBot:
             # Determine the trade action
             action = self.trade_manager.process_trade(symbol, current_price, available_balance if has_balance else None)
 
+            self.logger.debug(f"Trade action for {symbol}: {action}")
+
             if action == "SELL" and has_balance:
                 sell_balance_check, sell_balance = self.check_sell_balance(symbol, balances)
                 if sell_balance_check:
