@@ -281,41 +281,36 @@ class TradingBot:
         return config['base_asset'], config['quote_asset']
 
     def calculate_total_value(self, balances):
-        """
-        Calculate total portfolio value based on configured trading pairs
-        """
+        """Calculate total portfolio value in USDT"""
         total_value = 0.0
 
         # Add USDT balance
         usdt_balance = float(balances.get('USDT', {}).get('free', 0))
         total_value += usdt_balance
+        self.logger.debug(f"USDT balance: {usdt_balance}")
 
-        # Track processed base symbols to avoid duplicates
-        processed_symbols = set()
-
-        for symbol in SYMBOL_CONFIG:
-            base_symbol, _ = self.get_symbol_info(symbol)
-            if not base_symbol:
-                continue
-
-            # Skip if we've already processed this base symbol
-            if base_symbol in processed_symbols:
-                continue
-
-            processed_symbols.add(base_symbol)
-
-            if base_symbol in balances:
-                asset_balance = float(balances[base_symbol].get('free', 0))
-                if asset_balance > 0:
-                    current_price = self.get_current_market_price(symbol)
-                    if current_price:
-                        asset_value = asset_balance * current_price
-                        total_value += asset_value
-                        self.logger.info(f"Added {base_symbol} value: {asset_value} USDT")
+        # Calculate value of other assets
+        for symbol in self.trading_pairs:
+            try:
+                base_asset, _ = self.get_symbol_info(symbol)
+                if base_asset in balances:
+                    asset_balance = float(balances[base_asset]['free'])
+                    if asset_balance > 0:
+                        # Get current price
+                        current_price = self.get_current_market_price(symbol)
+                        if current_price:
+                            asset_value = asset_balance * current_price
+                            total_value += asset_value
+                            self.logger.debug(f"Added {base_asset} value: {asset_value:.2f} USDT")
+                        else:
+                            self.logger.warning(f"Could not get current price for {symbol}")
+                    else:
+                        self.logger.debug(f"Zero balance for {base_asset}")
                 else:
-                    self.logger.debug(f"Zero balance for {base_asset}")
-            else:
-                self.logger.debug(f"No balance entry for {base_asset}")
+                    self.logger.debug(f"No balance entry for {base_asset}")
+            except Exception as e:
+                self.logger.error(f"Error calculating value for {symbol}: {e}")
+                continue
 
         return total_value
 
