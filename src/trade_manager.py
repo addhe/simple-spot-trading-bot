@@ -5,9 +5,11 @@ import pandas as pd
 
 class TradeManager:
     def __init__(self, db_manager, client):
+        """Initialize TradeManager with database and client"""
         self.db_manager = db_manager
         self.client = client
         self.logger = logger
+        self.db_manager.initialize_database()
 
     def should_buy(self, symbol, current_price):
         """Determine whether to buy based on technical analysis"""
@@ -118,23 +120,23 @@ class TradeManager:
             return None
 
     def _calculate_rsi(self, prices, period=14):
-        """Calculate RSI indicator"""
+        """Calculate RSI technical indicator"""
         delta = prices.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
         rs = gain / loss
         return 100 - (100 / (1 + rs))
 
-    def _calculate_bollinger_bands(self, prices, window=20, num_std=2):
+    def _calculate_bollinger_bands(self, prices, period=20, num_std=2):
         """Calculate Bollinger Bands"""
-        rolling_mean = prices.rolling(window=window).mean()
-        rolling_std = prices.rolling(window=window).std()
-        upper_band = rolling_mean + (rolling_std * num_std)
-        lower_band = rolling_mean - (rolling_std * num_std)
-        return upper_band, rolling_mean, lower_band
+        middle_band = prices.rolling(window=period).mean()
+        std_dev = prices.rolling(window=period).std()
+        upper_band = middle_band + (std_dev * num_std)
+        lower_band = middle_band - (std_dev * num_std)
+        return upper_band, middle_band, lower_band
 
     def _calculate_macd(self, prices, fast=12, slow=26, signal=9):
-        """Calculate MACD"""
+        """Calculate MACD indicator"""
         exp1 = prices.ewm(span=fast, adjust=False).mean()
         exp2 = prices.ewm(span=slow, adjust=False).mean()
         macd = exp1 - exp2

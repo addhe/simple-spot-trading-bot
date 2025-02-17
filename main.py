@@ -64,6 +64,7 @@ class TradingBot:
 
         # Initialize database manager
         self.db_manager = DatabaseManager('table_transactions.db')
+        self.db_manager.initialize_database()  # Initialize database tables
 
         # Initialize Binance client
         self.initialize_client()
@@ -92,7 +93,6 @@ class TradingBot:
         self.take_profit = TAKE_PROFIT
 
         # Initialize database and calculate initial value
-        self.db_manager.setup_tables()
         initial_value = self.calculate_total_value(balances)
         self.logger.info(f"Initial portfolio value: {initial_value} USDT")
         self.logger.info(f"Initialized trading pairs: {self.trading_pairs}")
