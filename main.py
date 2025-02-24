@@ -110,35 +110,7 @@ def get_balances():
         return 0.0, {}
 
 # Fungsi untuk mendapatkan informasi simbol
-def get_symbol_info(symbol):
-    try:
-        # Retrieve symbol information from Binance API
-        symbol_info = client.get_symbol_info(symbol)
-        
-        # Check if symbol_info is None
-        if symbol_info is None:
-            logging.error(f"No symbol information available for {symbol}")
-            return None, None, None, None
-        
-        # Initialize variables
-        step_size = min_qty = max_qty = min_notional = None
-        
-        # Extract necessary filter information
-        for filter_info in symbol_info['filters']:
-            if filter_info['filterType'] == 'LOT_SIZE':
-                step_size = float(filter_info['stepSize'])
-                min_qty = float(filter_info['minQty'])
-                max_qty = float(filter_info['maxQty'])
-            elif filter_info['filterType'] == 'MIN_NOTIONAL':
-                min_notional = float(filter_info['minNotional'])
 
-        return step_size, min_qty, max_qty, min_notional
-    except BinanceAPIException as e:
-        logging.error(f"Error retrieving symbol info for {symbol}: {e}")
-        return None, None, None, None
-    except Exception as e:
-        logging.error(f"Unexpected error for {symbol}: {e}")
-        return None, None, None, None
 
 # Fungsi untuk membulatkan jumlah aset sesuai dengan presisi yang diizinkan
 def round_quantity(quantity, step_size):
@@ -227,8 +199,33 @@ def get_last_buy_price(symbol):
 
 # Inisialisasi FastAPI
 app = FastAPI()
+def get_symbol_info(symbol):
+    try:
+        symbol_info = client.get_symbol_info(symbol)
 
-# Endpoint untuk membeli aset
+        if not symbol_info:
+            logging.error(f"No symbol information available for {symbol}")
+            return None, None, None, None
+
+        # Initialize default values
+        step_size = min_qty = max_qty = min_notional = None
+
+        for filter_info in symbol_info['filters']:
+            if filter_info['filterType'] == 'LOT_SIZE':
+                step_size = float(filter_info['stepSize'])
+                min_qty = float(filter_info['minQty'])
+                max_qty = float(filter_info['maxQty'])
+            elif filter_info['filterType'] == 'MIN_NOTIONAL':
+                min_notional = float(filter_info['minNotional'])
+
+        return step_size, min_qty, max_qty, min_notional
+    except BinanceAPIException as e:
+        logging.error(f"Error retrieving symbol info for {symbol}: {e}")
+        return None, None, None, None
+    except Exception as e:
+        logging.error(f"Unexpected error for {symbol}: {e}")
+        return None, None, None, None
+
 @app.post("/buy/")
 def buy_asset_endpoint(request: BuyRequest):
     symbol = request.symbol
@@ -242,6 +239,7 @@ def buy_asset_endpoint(request: BuyRequest):
     if step_size is None or min_qty is None or max_qty is None or min_notional is None:
         raise HTTPException(status_code=400, detail=f"Gagal mendapatkan informasi simbol untuk {symbol}")
 
+    # Ensure quantity respects limits and rules
     quantity = round_quantity(quantity, step_size)
     quantity = max(quantity, min_qty)
     quantity = min(quantity, max_qty)
@@ -253,7 +251,7 @@ def buy_asset_endpoint(request: BuyRequest):
     if has_pending_orders():
         raise HTTPException(status_code=400, detail="Ada pesanan terbuka, tidak dapat melakukan transaksi baru.")
 
-    usdt_free, asset_balances = get_balances()
+    usdt_free, _ = get_balances()
     if not can_buy_asset(usdt_free, last_price, quantity):
         raise HTTPException(status_code=400, detail=f"Saldo USDT tidak cukup untuk membeli {symbol}")
 
@@ -264,7 +262,7 @@ def buy_asset_endpoint(request: BuyRequest):
     return {
         "symbol": symbol,
         "quantity": quantity,
-        "price": last_price,
+        "price": last_price,  # Log actual price from order if different
         "status": "success",
         "message": f"Beli {quantity} {symbol} pada harga {last_price}"
     }
