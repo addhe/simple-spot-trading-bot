@@ -32,16 +32,16 @@ logging.basicConfig(
 import config.settings as settings
 
 # Mengambil variabel lingkungan
-API_KEY = settings['API_KEY']
-API_SECRET = settings['API_SECRET']
-BASE_URL = settings['BASE_URL']
-TELEGRAM_TOKEN = settings['TELEGRAM_TOKEN']
-TELEGRAM_GROUP_ID = settings['TELEGRAM_GROUP_ID']
-SYMBOLS = settings['SYMBOLS']
-CACHE_LIFETIME = settings['CACHE_LIFETIME']  # 5 menit
-BUY_MULTIPLIER = settings['BUY_MULTIPLIER']
-SELL_MULTIPLIER = settings['SELL_MULTIPLIER']
-TOLERANCE = settings['TOLERANCE']
+API_KEY = settings.API_KEY
+API_SECRET = settings.API_SECRET
+BASE_URL = settings.BASE_URL
+TELEGRAM_TOKEN = settings.TELEGRAM_TOKEN
+TELEGRAM_GROUP_ID = settings.TELEGRAM_GROUP_ID
+SYMBOLS = settings.SYMBOLS
+CACHE_LIFETIME = settings.CACHE_LIFETIME
+BUY_MULTIPLIER = settings.BUY_MULTIPLIER
+SELL_MULTIPLIER = settings.SELL_MULTIPLIER
+TOLERANCE = settings.TOLERANCE
 
 # Inisialisasi klien Binance
 client = Client(api_key=API_KEY, api_secret=API_SECRET)
