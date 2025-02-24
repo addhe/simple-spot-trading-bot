@@ -1,68 +1,64 @@
 import logging
 from binance.client import Client
-from config.settings import (
-    API_KEY,
-    API_SECRET,
-    BASE_URL,
-    SYMBOLS
-)
+from config.settings import settings
+
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 
 # Konfigurasi logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
                     filename='sell_all_assets.log', filemode='w')  # Menyimpan log ke file
 
-# Inisialisasi klien Binance
-client = Client(api_key=API_KEY, api_secret=API_SECRET)
-
 def sell_all_assets():
+    # Inisialisasi klien Binance dengan API Key dan Secret
+    client = Client(settings['API_KEY'], settings['API_SECRET'])
+    client.API_URL = settings['BASE_URL']  # Setel URL ke produksi
+
     try:
-        balances = client.get_account()['balances']
+        # Cek koneksi dengan API
+        logging.info("Menghubungkan ke Binance...")
+        server_time = client.get_server_time()
+        logging.info(f"Waktu server: {server_time['serverTime']}")
+
         for symbol in SYMBOLS:
-            asset = symbol.replace('USDT', '')
-            asset_balance = next((item for item in balances if item['asset'] == asset), None)
-            if asset_balance and float(asset_balance['free']) > 0:
-                quantity = float(asset_balance['free'])
-                step_size, min_qty, max_qty, min_notional = get_symbol_info(symbol)
+            asset = symbol[:-4]  # Mengambil nama aset (misalnya BTC dari BTCUSDT)
+            balance = client.get_asset_balance(asset=asset)
 
-                if step_size is not None and min_qty is not None and max_qty is not None and min_notional is not None:
-                    quantity = round_quantity(quantity, step_size)
-                    quantity = max(quantity, min_qty)
-                    quantity = min(quantity, max_qty)
+            if balance and float(balance['free']) > 0:
+                quantity = float(balance['free'])  # Mengambil jumlah yang tersedia untuk dijual
+                logging.info(f"Mencoba menjual {quantity} {asset} untuk {symbol}...")
 
-                    if quantity > 0:
-                        sell_asset(symbol, quantity)
+                # Membuat order jual
+                response = client.create_order(
+                    symbol=symbol,
+                    side='SELL',
+                    type='MARKET',  # Menggunakan order pasar untuk menjual
+                    quantity=quantity
+                )
+
+                # Menyusun informasi order yang berhasil
+                order_info = {
+                    'symbol': response['symbol'],
+                    'orderId': response['orderId'],
+                    'executedQty': response['executedQty'],
+                    'cummulativeQuoteQty': response['cummulativeQuoteQty'],
+                    'status': response['status'],
+                    'fills': response['fills']
+                }
+
+                # Log hasil penjualan
+                logging.info(f"Order jual berhasil untuk {asset}:")
+                logging.info(f"  - Order ID: {order_info['orderId']}")
+                logging.info(f"  - Jumlah yang dieksekusi: {order_info['executedQty']} {asset}")
+                logging.info(f"  - Total nilai transaksi: {order_info['cummulativeQuoteQty']} USDT")
+                logging.info(f"  - Status: {order_info['status']}")
+                for fill in order_info['fills']:
+                    logging.info(f"    - Harga: {fill['price']} USDT, Jumlah: {fill['qty']} {asset}")
+
+            else:
+                logging.info(f"Tidak ada saldo untuk {asset}.")
+
     except Exception as e:
-        logging.error(f"Gagal menjual semua aset: {e}")
-
-def get_symbol_info(symbol):
-    try:
-        symbol_info = client.get_symbol_info(symbol)
-        for filter_info in symbol_info['filters']:
-            if filter_info['filterType'] == 'LOT_SIZE':
-                step_size = float(filter_info['stepSize'])
-                min_qty = float(filter_info['minQty'])
-                max_qty = float(filter_info['maxQty'])
-            elif filter_info['filterType'] == 'MIN_NOTIONAL':
-                min_notional = float(filter_info['minNotional'])
-        return step_size, min_qty, max_qty, min_notional
-    except Exception as e:
-        logging.error(f"Gagal mendapatkan informasi simbol untuk {symbol}: {e}")
-        return None, None, None, None
-
-def round_quantity(quantity, step_size):
-    return round(quantity / step_size) * step_size
-
-def sell_asset(symbol, quantity):
-    try:
-        order = client.order_market_sell(
-            symbol=symbol,
-            quantity=quantity
-        )
-        logging.info(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
-        return order
-    except Exception as e:
-        logging.error(f"Gagal menjual {symbol}: {e}")
-        return None
+        logging.error(f"Terjadi kesalahan: {e}")
 
 if __name__ == "__main__":
     sell_all_assets()

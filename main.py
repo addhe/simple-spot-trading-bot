@@ -16,36 +16,34 @@ import requests
 import sys
 import logging
 
-from config.settings import (
-    API_KEY,
-    API_SECRET,
-    BASE_URL,
-    TELEGRAM_TOKEN,
-    TELEGRAM_GROUP_ID,
-    SYMBOLS,
-    CACHE_LIFETIME,
-    BUY_MULTIPLIER,
-    SELL_MULTIPLIER,
-    TOLERANCE
-)
-
 # Konfigurasi logging
 log_directory = 'logs/bot'
 if not os.path.exists(log_directory):
     os.makedirs(log_directory)
 
 log_file = os.path.join(log_directory, 'bot.log')
+handler = RotatingFileHandler(log_file, maxBytes=1000000, backupCount=5)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=5),
-        logging.StreamHandler()
-    ]
+    handlers=[handler]
 )
+
+# Mengambil variabel lingkungan
+API_KEY = os.environ['API_KEY']
+API_SECRET = os.environ['API_SECRET']
+BASE_URL = os.environ['BASE_URL']
+TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
+TELEGRAM_GROUP_ID = os.environ['TELEGRAM_GROUP_ID']
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+CACHE_LIFETIME = 60  # 5 menit
+BUY_MULTIPLIER = 0.925
+SELL_MULTIPLIER = 1.03
+TOLERANCE = 0.01
 
 # Inisialisasi klien Binance
 client = Client(api_key=API_KEY, api_secret=API_SECRET)
+client.API_URL = BASE_URL
 
 # Inisialisasi koneksi database SQLite
 DB_NAME = 'table_transactions.db'
@@ -65,8 +63,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 ''')
 conn.commit()
 
-app = FastAPI()
-
+# Model Pydantic untuk request body
 class BuyRequest(BaseModel):
     symbol: str
     quantity: float
@@ -74,6 +71,20 @@ class BuyRequest(BaseModel):
 class SellRequest(BaseModel):
     symbol: str
     quantity: float
+
+# Fungsi untuk mengirim pesan Telegram
+def send_telegram_message(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_GROUP_ID,
+            "text": message
+        }
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        logging.info(f"Pesan Telegram terkirim: {message}")
+    except Exception as e:
+        logging.error(f"Gagal mengirim pesan Telegram: {e}")
 
 # Fungsi untuk mendapatkan harga terakhir
 def get_last_price(symbol):
@@ -105,15 +116,12 @@ def get_symbol_info(symbol):
                 step_size = float(filter_info['stepSize'])
                 min_qty = float(filter_info['minQty'])
                 max_qty = float(filter_info['maxQty'])
-                return step_size, min_qty, max_qty
             elif filter_info['filterType'] == 'MIN_NOTIONAL':
                 min_notional = float(filter_info['minNotional'])
-                return step_size, min_qty, max_qty, min_notional
-        logging.error(f"Tidak ditemukan stepSize, minQty, atau maxQty untuk simbol {symbol}")
-        return None, None, None
+        return step_size, min_qty, max_qty, min_notional
     except BinanceAPIException as e:
         logging.error(f"Gagal mendapatkan informasi simbol untuk {symbol}: {e}")
-        return None, None, None
+        return None, None, None, None
 
 # Fungsi untuk membulatkan jumlah aset sesuai dengan presisi yang diizinkan
 def round_quantity(quantity, step_size):
@@ -134,15 +142,6 @@ def save_transaction(symbol, type, quantity, price):
         logging.info(f"Transaksi {type} {quantity} {symbol} pada harga {price} disimpan ke database")
     except sqlite3.Error as e:
         logging.error(f"Gagal menyimpan transaksi ke database: {e}")
-
-# Fungsi untuk memeriksa apakah ada pending order
-def has_pending_orders():
-    try:
-        open_orders = client.get_open_orders()
-        return len(open_orders) > 0
-    except BinanceAPIException as e:
-        logging.error(f"Gagal mendapatkan open orders: {e}")
-        return False
 
 # Fungsi untuk membeli aset
 def buy_asset(symbol, quantity):
@@ -176,12 +175,23 @@ def sell_asset(symbol, quantity):
         send_telegram_message(f"Gagal menjual {symbol}: {e}")
         return None
 
+# Fungsi untuk memeriksa apakah ada transaksi pending
+def has_pending_orders():
+    try:
+        open_orders = client.get_open_orders()
+        return len(open_orders) > 0
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan pesanan terbuka: {e}")
+        return True
+
 # Fungsi untuk mengirimkan status saldo setiap satu jam
-def send_status_update():
-    usdt_free, asset_balances = get_balances()
-    status_message = f"Status Saldo:\nSaldo USDT: {usdt_free}\nSaldo Aset: {asset_balances}"
-    logging.info(status_message)
-    send_telegram_message(status_message)
+def send_status_every_hour():
+    while True:
+        usdt_free, asset_balances = get_balances()
+        status_message = f"Status Saldo:\nSaldo USDT: {usdt_free}\nSaldo Aset: {asset_balances}"
+        logging.info(status_message)
+        send_telegram_message(status_message)
+        time.sleep(3600)  # 1 jam
 
 # Fungsi untuk mendapatkan harga pembelian terakhir
 def get_last_buy_price(symbol):
@@ -198,80 +208,82 @@ def get_last_buy_price(symbol):
         logging.error(f"Gagal mendapatkan harga pembelian terakhir: {e}")
         return None
 
-# API untuk melakukan pembelian
+# Inisialisasi FastAPI
+app = FastAPI()
+
+# Endpoint untuk membeli aset
 @app.post("/buy/")
-def buy(request: BuyRequest):
+def buy_asset_endpoint(request: BuyRequest):
     symbol = request.symbol
     quantity = request.quantity
-
-    if has_pending_orders():
-        logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
-        raise HTTPException(status_code=400, detail="Ada pending order, coba lagi nanti.")
 
     last_price = get_last_price(symbol)
     if last_price is None:
         raise HTTPException(status_code=400, detail=f"Gagal mendapatkan harga terakhir untuk {symbol}")
 
     step_size, min_qty, max_qty, min_notional = get_symbol_info(symbol)
-
     if step_size is None or min_qty is None or max_qty is None or min_notional is None:
-        raise HTTPException(status_code=400, detail=f"Tidak ditemukan informasi simbol untuk {symbol}")
+        raise HTTPException(status_code=400, detail=f"Gagal mendapatkan informasi simbol untuk {symbol}")
 
     quantity = round_quantity(quantity, step_size)
     quantity = max(quantity, min_qty)
     quantity = min(quantity, max_qty)
 
-    if quantity <= 0:
-        raise HTTPException(status_code=400, detail=f"Jumlah {symbol} tidak valid")
-
-    notional = last_price * quantity
+    notional = quantity * last_price
     if notional < min_notional:
         raise HTTPException(status_code=400, detail=f"Minimal notional tidak terpenuhi untuk {symbol} dengan jumlah {quantity} pada harga {last_price}")
+
+    if has_pending_orders():
+        raise HTTPException(status_code=400, detail="Ada pesanan terbuka, tidak dapat melakukan transaksi baru.")
 
     usdt_free, asset_balances = get_balances()
     if not can_buy_asset(usdt_free, last_price, quantity):
         raise HTTPException(status_code=400, detail=f"Saldo USDT tidak cukup untuk membeli {symbol}")
 
     buy_order = buy_asset(symbol, quantity)
-    if buy_order:
-        return {"message": f"Beli {quantity} {symbol} berhasil"}
-    else:
+    if buy_order is None:
         raise HTTPException(status_code=500, detail=f"Gagal membeli {symbol}")
 
-# API untuk melakukan penjualan
+    return {
+        "symbol": symbol,
+        "quantity": quantity,
+        "price": last_price,
+        "status": "success",
+        "message": f"Beli {quantity} {symbol} pada harga {last_price}"
+    }
+
+# Endpoint untuk menjual aset
 @app.post("/sell/")
-def sell(request: SellRequest):
+def sell_asset_endpoint(request: SellRequest):
     symbol = request.symbol
     quantity = request.quantity
 
-    if has_pending_orders():
-        logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
-        raise HTTPException(status_code=400, detail="Ada pending order, coba lagi nanti.")
-
     step_size, min_qty, max_qty, min_notional = get_symbol_info(symbol)
-
     if step_size is None or min_qty is None or max_qty is None or min_notional is None:
-        raise HTTPException(status_code=400, detail=f"Tidak ditemukan informasi simbol untuk {symbol}")
+        raise HTTPException(status_code=400, detail=f"Gagal mendapatkan informasi simbol untuk {symbol}")
 
     quantity = round_quantity(quantity, step_size)
     quantity = max(quantity, min_qty)
     quantity = min(quantity, max_qty)
 
-    if quantity <= 0:
-        raise HTTPException(status_code=400, detail=f"Jumlah {symbol} tidak valid")
+    if has_pending_orders():
+        raise HTTPException(status_code=400, detail="Ada pesanan terbuka, tidak dapat melakukan transaksi baru.")
 
     sell_order = sell_asset(symbol, quantity)
-    if sell_order:
-        return {"message": f"Jual {quantity} {symbol} berhasil"}
-    else:
+    if sell_order is None:
         raise HTTPException(status_code=500, detail=f"Gagal menjual {symbol}")
 
-# API untuk melakukan pengecekan saldo
-@app.get("/balance/")
-def get_balance():
+    return {
+        "symbol": symbol,
+        "quantity": quantity,
+        "status": "success",
+        "message": f"Jual {quantity} {symbol}"
+    }
+
+# Endpoint untuk melakukan pengecekan saldo
+@app.get("/check_balance/")
+def check_balance():
     usdt_free, asset_balances = get_balances()
-    if usdt_free is None or asset_balances is None:
-        raise HTTPException(status_code=500, detail="Gagal mendapatkan saldo")
     return {
         "usdt_free": usdt_free,
         "asset_balances": asset_balances
@@ -279,64 +291,12 @@ def get_balance():
 
 # Fungsi utama
 def main():
-    last_status_update = time.time()
-    buy_prices = {symbol: None for symbol in SYMBOLS}
+    status_thread = threading.Thread(target=send_status_every_hour)
+    status_thread.daemon = True
+    status_thread.start()
 
-    while True:
-        usdt_free, asset_balances = get_balances()
-        logging.info(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
-        send_telegram_message(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
-
-        if has_pending_orders():
-            logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
-            time.sleep(300)  # 5 menit
-            continue
-
-        # Bagi saldo USDT merata antara semua simbol trading
-        usdt_per_symbol = usdt_free / len(SYMBOLS)
-
-        for symbol in SYMBOLS:
-            last_price = get_last_price(symbol)
-            if last_price is None:
-                continue
-
-            asset = symbol.replace('USDT', '')
-            asset_balance = asset_balances.get(asset, 0.0)
-
-            if asset_balance == 0.0:
-                # Membeli aset jika tidak memiliki aset tersebut
-                quantity = usdt_per_symbol * BUY_MULTIPLIER / last_price
-                step_size, min_qty, max_qty, min_notional = get_symbol_info(symbol)
-
-                if step_size is not None and min_qty is not None and max_qty is not None and min_notional is not None:
-                    quantity = round_quantity(quantity, step_size)
-                    quantity = max(quantity, min_qty)
-                    quantity = min(quantity, max_qty)
-
-                    if quantity > 0 and can_buy_asset(usdt_free, last_price, quantity):
-                        notional = last_price * quantity
-                        if notional >= min_notional:
-                            buy_asset(symbol, quantity)
-                            buy_prices[symbol] = last_price
-                            time.sleep(300)  # 5 menit
-                        else:
-                            logging.error(f"Minimal notional tidak terpenuhi untuk {symbol} dengan jumlah {quantity} pada harga {last_price}")
-            else:
-                # Menjual aset jika harga naik 3%
-                sell_price = last_price * SELL_MULTIPLIER
-                if sell_price >= last_price * (1 + TOLERANCE):
-                    buy_price = buy_prices.get(symbol, None)
-                    if buy_price is not None and sell_price > buy_price:
-                        sell_asset(symbol, asset_balance)
-                        time.sleep(300)  # 5 menit
-
-        # Mengirimkan status saldo setiap satu jam
-        if time.time() - last_status_update >= 3600:  # 3600 detik = 1 jam
-            send_status_update()
-            last_status_update = time.time()
-
-        time.sleep(CACHE_LIFETIME)
-
-if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+if __name__ == "__main__":
+    main()

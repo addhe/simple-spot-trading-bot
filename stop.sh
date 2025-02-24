@@ -7,13 +7,18 @@ BOT_NAME="crypto_bot"
 SCRIPT_DIR="/root/simple-spot-trading-bot"
 
 # Baca PID dari file
-PID=$(cat $SCRIPT_DIR/$BOT_NAME.pid)
+PID_FILE="$SCRIPT_DIR/$BOT_NAME.pid"
 
-# Hentikan proses dengan PID tersebut
-if [ -n "$PID" ]; then
-    kill -9 $PID
-    rm $SCRIPT_DIR/$BOT_NAME.pid
-    echo "Bot trading dengan PID $PID dihentikan"
+if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    if ps -p $PID > /dev/null; then
+        kill $PID
+        rm $PID_FILE
+        echo "Bot $BOT_NAME telah dihentikan."
+    else
+        rm $PID_FILE
+        echo "Bot $BOT_NAME tidak berjalan."
+    fi
 else
-    echo "Tidak ada proses bot trading yang berjalan"
+    echo "Bot $BOT_NAME tidak berjalan."
 fi
