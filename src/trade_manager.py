@@ -137,6 +137,10 @@ class TradeManager:
                         self.logger.info(f"Insufficient quantity to sell {symbol}. Available: {available_balance}, Minimum: {min_qty}")
                     if total_notional < min_notional:
                         self.logger.info(f"Insufficient notional value to sell {symbol}. Current: {total_notional:.2f} USDT, Minimum: {min_notional} USDT")
+
+                    # Try to handle dust position
+                    if available_balance > 0:
+                        self.handle_dust_position(symbol, available_balance, current_price)
                 return None
 
             # No position, check if we should buy
@@ -367,4 +371,35 @@ class TradeManager:
 
         except Exception as e:
             self.logger.error(f"Error executing buy for {symbol}: {str(e)}")
+            return False
+
+    def handle_dust_position(self, symbol, quantity, current_price):
+        """Handle dust positions that are too small to sell normally"""
+        try:
+            # Calculate USDT value
+            usdt_value = quantity * current_price
+
+            # Check if this is truly a dust position (< $10)
+            if usdt_value < 10:
+                self.logger.info(f"Attempting to handle dust position for {symbol}: {quantity} ({usdt_value:.2f} USDT)")
+
+                try:
+                    # Try to convert small balance to BNB
+                    asset = symbol.replace('USDT', '')
+                    result = self.client.transfer_dust(asset=[asset])
+
+                    if result and 'totalServiceCharge' in result:
+                        self.logger.info(f"Successfully converted {symbol} dust to BNB. Service charge: {result['totalServiceCharge']} BNB")
+                        # Reset position tracking since we've handled the dust
+                        self.db_manager.update_highest_price(symbol, 0)
+                        return True
+                    else:
+                        self.logger.warning(f"Could not convert {symbol} dust to BNB. May not be eligible for dust transfer.")
+                except Exception as e:
+                    self.logger.error(f"Error converting dust for {symbol}: {e}")
+
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Error handling dust position for {symbol}: {e}")
             return False
