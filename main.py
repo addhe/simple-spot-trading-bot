@@ -143,11 +143,11 @@ class TradingBot:
 
             # Get asset info
             base_asset, _ = self.get_symbol_info(symbol)
-            
+
             # Check balances
             has_usdt, usdt_balance = self.check_buy_balance(balances)
             has_asset, asset_balance = self.check_sell_balance(symbol, balances)
-            
+
             self.logger.debug(f"Balance Check for {symbol}:")
             self.logger.debug(f"USDT - Available: ${usdt_balance:.2f}, Sufficient: {has_usdt}")
             self.logger.debug(f"{base_asset} - Available: {asset_balance}, Sufficient: {has_asset}")
@@ -237,20 +237,20 @@ class TradingBot:
     def check_buy_balance(self, balances):
         """Check if there is enough USDT balance for buying"""
         self.logger.debug(f"Checking USDT balance in balances: {balances.get('USDT', {})}")
-        
+
         if 'USDT' not in balances:
             self.logger.debug("No USDT found in balances")
             return False, 0
-            
+
         usdt_balance = float(balances['USDT']['free'])
         self.logger.debug(f"Available USDT balance: ${usdt_balance:.2f}")
-        
+
         # Check if balance meets minimum requirements
         min_required = MAX_INVESTMENT_PER_TRADE  # Use max investment as minimum required
         if usdt_balance < min_required:
             self.logger.debug(f"USDT balance (${usdt_balance:.2f}) below minimum required (${min_required:.2f})")
             return False, usdt_balance
-            
+
         self.logger.debug(f"USDT balance (${usdt_balance:.2f}) is sufficient for trading")
         return True, usdt_balance
 
@@ -258,20 +258,20 @@ class TradingBot:
         """Check if there is enough base asset balance for selling"""
         base_asset, _ = self.get_symbol_info(symbol)
         self.logger.debug(f"Checking {base_asset} balance in balances: {balances.get(base_asset, {})}")
-        
+
         if base_asset not in balances:
             self.logger.debug(f"No {base_asset} found in balances")
             return False, 0
-            
+
         asset_balance = float(balances[base_asset]['free'])
         self.logger.debug(f"Available {base_asset} balance: {asset_balance}")
-        
+
         # Check if balance meets minimum requirements
         min_required = MIN_TRADE_AMOUNT.get(symbol, 0)
         if asset_balance < min_required:
             self.logger.debug(f"{base_asset} balance ({asset_balance}) below minimum required ({min_required})")
             return False, asset_balance
-            
+
         self.logger.debug(f"{base_asset} balance ({asset_balance}) is sufficient for trading")
         return True, asset_balance
 
@@ -325,87 +325,58 @@ class TradingBot:
 
         return total_value
 
-    def should_buy(self, symbol, current_price):
-        """Determine whether to buy based on technical analysis"""
+    def trade(self):
+        """Execute trading strategy"""
         try:
-            conn = self.db_manager.get_connection()
-            query = f'''
-                SELECT timestamp, close_price, volume
-                FROM historical_data
-                WHERE symbol = '{symbol}'
-                ORDER BY timestamp DESC
-                LIMIT 500
-            '''
-            df = pd.read_sql_query(query, conn)
-            conn.close()
+            # Update balances first
+            if not self.update_balances():
+                self.logger.error("Failed to update balances, skipping trade cycle")
+                return
 
-            if len(df) < 50:
-                self.logger.debug(f"{symbol}: Not enough historical data for analysis (only {len(df)} records)")
-                return False
+            for symbol in self.trading_pairs:
+                try:
+                    # Get current market price
+                    current_price = self.get_current_market_price(symbol)
+                    if not current_price:
+                        self.logger.error(f"Could not get current price for {symbol}")
+                        continue
 
-            # Calculate basic indicators
-            df['MA_50'] = df['close_price'].rolling(window=50).mean()
-            df['MA_200'] = df['close_price'].rolling(window=200).mean()
-            df['RSI'] = _calculate_rsi(df['close_price'])
+                    # Get trading decision from trade manager
+                    decision = self.trade_manager.process_trade(symbol, current_price)
+                    self.logger.info(f"Trading decision for {symbol}: {decision}")
 
-            # Calculate Bollinger Bands
-            df['BB_upper'], df['BB_middle'], df['BB_lower'] = self._calculate_bollinger_bands(df['close_price'])
+                    if decision == "BUY":
+                        # Calculate position size
+                        usdt_balance = float(self.balances.get('USDT', {}).get('free', 0))
+                        position_size = self.calculate_position_size(symbol, current_price, usdt_balance)
 
-            # Calculate MACD
-            df['MACD'], df['MACD_signal'] = self._calculate_macd(df['close_price'])
-            df['MACD_hist'] = df['MACD'] - df['MACD_signal']
+                        if position_size > 0:
+                            if self.trade_manager.execute_buy(symbol, position_size):
+                                self.update_balances()
+                        else:
+                            self.logger.info(f"Skipping buy for {symbol}: Position size too small")
 
-            latest = df.iloc[-1]
+                    elif decision == "SELL":
+                        # Get available balance for the asset
+                        base_asset, _ = self.get_symbol_info(symbol)
+                        position_size = float(self.balances.get(base_asset, {}).get('free', 0))
 
-            # Log all indicators for debugging
-            self.logger.debug(f"Technical Analysis for {symbol}:")
-            self.logger.debug(f"Current Price: ${current_price:.2f}")
-            self.logger.debug(f"MA50: ${latest['MA_50']:.2f}")
-            self.logger.debug(f"MA200: ${latest['MA_200']:.2f}")
-            self.logger.debug(f"RSI: {latest['RSI']:.2f}")
-            self.logger.debug(f"BB Lower: ${latest['BB_lower']:.2f}")
-            self.logger.debug(f"MACD Histogram: {latest['MACD_hist']:.4f}")
+                        if position_size > 0:
+                            if self.trade_manager.execute_sell(symbol, position_size):
+                                self.update_balances()
+                        else:
+                            self.logger.info(f"Skipping sell for {symbol}: No balance available")
 
-            # Enhanced decision logic with more lenient conditions
-            buy_signals = 0
-            required_signals = 2  # Reduced from 3 to make it more sensitive
-
-            # RSI oversold condition (weight: 2)
-            if latest['RSI'] < RSI_OVERSOLD:
-                buy_signals += 2
-                self.logger.debug(f"✅ RSI is oversold ({latest['RSI']:.2f} < {RSI_OVERSOLD})")
-            else:
-                self.logger.debug(f"❌ RSI not oversold ({latest['RSI']:.2f} >= {RSI_OVERSOLD})")
-
-            # Price near or below lower Bollinger Band (weight: 2)
-            bb_threshold = latest['BB_lower'] * 1.01  # Allow price to be slightly above BB lower
-            if current_price <= bb_threshold:
-                buy_signals += 2
-                self.logger.debug(f"✅ Price near/below BB lower (${current_price:.2f} <= ${bb_threshold:.2f})")
-            else:
-                self.logger.debug(f"❌ Price above BB lower (${current_price:.2f} > ${bb_threshold:.2f})")
-
-            # MACD momentum (weight: 1)
-            if df['MACD_hist'].iloc[-1] > df['MACD_hist'].iloc[-2]:
-                buy_signals += 1
-                self.logger.debug("✅ MACD momentum is positive")
-            else:
-                self.logger.debug("❌ MACD momentum is negative")
-
-            # Price between MAs (weight: 1)
-            if current_price > latest['MA_200'] and current_price < latest['MA_50']:
-                buy_signals += 1
-                self.logger.debug(f"✅ Price between MA200 and MA50")
-            else:
-                self.logger.debug(f"❌ Price not between MA200 and MA50")
-
-            should_buy = buy_signals >= required_signals
-            self.logger.info(f"{symbol} Buy Decision: {should_buy} (Signals: {buy_signals}/{required_signals})")
-            return should_buy
+                except Exception as e:
+                    self.logger.error(f"Error processing {symbol}: {e}")
+                    self.handle_symbol_error(symbol, e)
 
         except Exception as e:
-            self.logger.error(f"Error in should_buy for {symbol}: {str(e)}")
-            return False
+            self.logger.error(f"Error in trade function: {e}")
+
+    def should_buy(self, symbol, current_price):
+        """Delegate buy decision to trade manager"""
+        return self.trade_manager.should_buy(symbol, current_price)
 
     def _calculate_bollinger_bands(self, prices, window=20, num_std=2):
         """Calculate Bollinger Bands"""
@@ -424,66 +395,32 @@ class TradingBot:
         return macd, signal_line
 
     def calculate_position_size(self, symbol, current_price, usdt_per_symbol):
-        _, quote_asset = self.get_symbol_info(symbol)
-        usdt_balance = self.check_symbol_balance(symbol, self.balances)[1]
-
-        # Ensure we don't exceed available USDT
-        position_size_usdt = min(usdt_per_symbol, usdt_balance)
-        position_size = position_size_usdt / current_price
-        return round(position_size, 4)
-
-    def trade(self):
-        """Execute trading strategy"""
+        """Calculate the position size based on available USDT and maximum investment per trade"""
         try:
-            # Update balances first
-            if not self.update_balances():
-                self.logger.error("Failed to update balances, skipping trade cycle")
-                return
+            # Get USDT balance
+            has_usdt, usdt_balance = self.check_buy_balance(self.balances)
+            if not has_usdt:
+                self.logger.warning(f"Insufficient USDT balance: {usdt_balance}")
+                return 0
 
-            for symbol in self.trading_pairs:
-                try:
-                    # Get current market price
-                    current_price = self.get_current_market_price(symbol)
-                    if not current_price:
-                        continue
+            # Calculate position size in base asset
+            position_size_usdt = min(usdt_per_symbol, usdt_balance, MAX_INVESTMENT_PER_TRADE)
+            position_size = position_size_usdt / current_price
 
-                    # Get trading decision
-                    decision = self.trade_manager.process_trade(symbol, current_price)
-                    
-                    if decision == "BUY":
-                        # Calculate position size based on available USDT
-                        usdt_balance = float(self.balances.get('USDT', {}).get('free', 0))
-                        position_size = min(usdt_balance * 0.95, MAX_INVESTMENT_PER_TRADE) / current_price
-                        
-                        if position_size * current_price >= MIN_TRADE_AMOUNT:
-                            if self.trade_manager.execute_buy(symbol, position_size):
-                                self.update_balances()  # Update balances after successful trade
-                        else:
-                            self.logger.info(f"Position size too small for {symbol}")
-                    
-                    elif decision == "SELL":
-                        base_asset = SYMBOL_CONFIG[symbol]['base_asset']
-                        position_size = float(self.balances.get(base_asset, {}).get('free', 0))
-                        
-                        if position_size * current_price >= MIN_TRADE_AMOUNT:
-                            if self.trade_manager.execute_sell(symbol, position_size):
-                                self.update_balances()  # Update balances after successful trade
-                        else:
-                            self.logger.info(f"Position size too small for {symbol}")
+            # Get lot size info for the symbol
+            symbol_info = self.client.get_symbol_info(symbol)
+            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
 
-                except Exception as e:
-                    self.logger.error(f"Error processing {symbol}: {e}")
-                    self.error_count += 1
-                    self.last_error_time = time.time()
-                    
-                    if self.error_count >= 3:
-                        self.logger.error(f"Disabling trading for {symbol} due to excessive errors")
-                        send_telegram_message(f"⚠️ Trading disabled for {symbol} due to excessive errors")
-                        if symbol in self.trading_pairs:
-                            self.trading_pairs.remove(symbol)
+            if lot_size_filter:
+                step_size = float(lot_size_filter['stepSize'])
+                # Round to step size
+                position_size = round(position_size - (position_size % step_size), len(str(step_size).split('.')[1]))
 
+            self.logger.info(f"Calculated position size for {symbol}: {position_size} (USDT value: {position_size * current_price})")
+            return position_size
         except Exception as e:
-            self.logger.error(f"Error in trade function: {e}")
+            self.logger.error(f"Error calculating position size for {symbol}: {e}")
+            return 0
 
     def run(self):
         """Run the trading bot"""
@@ -505,14 +442,14 @@ class TradingBot:
         """Shutdown the bot gracefully"""
         try:
             self.logger.info("Initiating bot shutdown...")
-            
+
             # Stop all threads
             for key in self.thread_status:
                 self.thread_status[key] = False
-            
+
             # Cleanup resources
             self.cleanup()
-            
+
             self.logger.info("Bot shutdown complete")
         except Exception as e:
             self.logger.error(f"Error during shutdown: {e}")
