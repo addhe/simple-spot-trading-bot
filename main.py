@@ -112,8 +112,18 @@ def get_balances():
 # Fungsi untuk mendapatkan informasi simbol
 def get_symbol_info(symbol):
     try:
+        # Retrieve symbol information from Binance API
         symbol_info = client.get_symbol_info(symbol)
-        step_size = min_qty = max_qty = min_notional = None  # Initialize all
+        
+        # Check if symbol_info is None
+        if symbol_info is None:
+            logging.error(f"No symbol information available for {symbol}")
+            return None, None, None, None
+        
+        # Initialize variables
+        step_size = min_qty = max_qty = min_notional = None
+        
+        # Extract necessary filter information
         for filter_info in symbol_info['filters']:
             if filter_info['filterType'] == 'LOT_SIZE':
                 step_size = float(filter_info['stepSize'])
@@ -121,9 +131,13 @@ def get_symbol_info(symbol):
                 max_qty = float(filter_info['maxQty'])
             elif filter_info['filterType'] == 'MIN_NOTIONAL':
                 min_notional = float(filter_info['minNotional'])
+
         return step_size, min_qty, max_qty, min_notional
     except BinanceAPIException as e:
-        logging.error(f"Gagal mendapatkan informasi simbol untuk {symbol}: {e}")
+        logging.error(f"Error retrieving symbol info for {symbol}: {e}")
+        return None, None, None, None
+    except Exception as e:
+        logging.error(f"Unexpected error for {symbol}: {e}")
         return None, None, None, None
 
 # Fungsi untuk membulatkan jumlah aset sesuai dengan presisi yang diizinkan
