@@ -107,22 +107,47 @@ class TradeManager:
                     self.db_manager.update_highest_price(symbol, current_price)
                     highest_price = current_price
 
-                # Check take profit and trailing stop
-                if self.check_take_profit(symbol, current_price, last_buy_price):
-                    self.logger.info(f"Take profit triggered for {symbol}")
-                    return "SELL"
+                # Get available balance before checking sell conditions
+                balances = get_balances(self.client)
+                base_asset = symbol.replace('USDT', '')
+                available_balance = float(balances.get(base_asset, {}).get('free', 0))
 
-                if self.check_trailing_stop(symbol, current_price, highest_price):
-                    self.logger.info(f"Trailing stop triggered for {symbol}")
-                    return "SELL"
+                # Get symbol info for minimum quantity
+                symbol_info = self.client.get_symbol_info(symbol)
+                min_qty = float(next((f['minQty'] for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), 0.001))
 
-                self.logger.debug(f"Holding {symbol} position. Entry: {last_buy_price}, Current: {current_price}, Highest: {highest_price}")
+                # Only proceed with sell checks if we have sufficient quantity
+                if available_balance >= min_qty:
+                    # Check take profit and trailing stop
+                    if self.check_take_profit(symbol, current_price, last_buy_price):
+                        self.logger.info(f"Take profit triggered for {symbol}")
+                        return "SELL"
+
+                    if self.check_trailing_stop(symbol, current_price, highest_price):
+                        self.logger.info(f"Trailing stop triggered for {symbol}")
+                        return "SELL"
+
+                    self.logger.debug(f"Holding {symbol} position. Entry: {last_buy_price}, Current: {current_price}, Highest: {highest_price}")
+                else:
+                    self.logger.info(f"Insufficient quantity to sell {symbol}. Available: {available_balance}, Minimum: {min_qty}")
                 return None
 
             # No position, check if we should buy
             if self.should_buy(symbol, current_price):
-                self.logger.info(f"Buy signal for {symbol} at {current_price}")
-                return "BUY"
+                # Check if we can meet minimum notional value
+                symbol_info = self.client.get_symbol_info(symbol)
+                min_notional = float(next((f['minNotional'] for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), 10))
+
+                # Check USDT balance
+                balances = get_balances(self.client)
+                usdt_balance = float(balances.get('USDT', {}).get('free', 0))
+
+                # Only signal buy if we can meet minimum notional
+                if usdt_balance >= min_notional:
+                    self.logger.info(f"Buy signal for {symbol} at {current_price}")
+                    return "BUY"
+                else:
+                    self.logger.info(f"Insufficient USDT for minimum notional. Required: {min_notional}, Available: {usdt_balance}")
 
             return None
 
@@ -237,8 +262,19 @@ class TradeManager:
             self.logger.info(f"Minimum notional value for {symbol}: {min_notional_value}")
 
             if total_notional < min_notional_value:
-                self.logger.error(f"Order value {total_notional} is below minimum {min_notional_value} USDT")
-                return False
+                # Try to sell entire balance if available
+                if available_balance > quantity:
+                    adjusted_quantity = available_balance
+                    total_notional = adjusted_quantity * current_price
+                    if total_notional >= min_notional_value:
+                        self.logger.info(f"Adjusting quantity from {quantity} to {adjusted_quantity} to meet minimum notional")
+                        quantity = adjusted_quantity
+                    else:
+                        self.logger.error(f"Even full balance ({available_balance}) doesn't meet minimum notional")
+                        return False
+                else:
+                    self.logger.error(f"Order value {total_notional} is below minimum {min_notional_value} USDT")
+                    return False
 
             # Create the order
             self.logger.info(f"Creating market sell order: {symbol}, quantity: {quantity}")
