@@ -107,17 +107,21 @@ class TradeManager:
                     self.db_manager.update_highest_price(symbol, current_price)
                     highest_price = current_price
 
-                # Get available balance before checking sell conditions
+                # Get available balance and check if it meets minimum requirements
                 balances = get_balances(self.client)
                 base_asset = symbol.replace('USDT', '')
                 available_balance = float(balances.get(base_asset, {}).get('free', 0))
 
-                # Get symbol info for minimum quantity
+                # Get symbol info for minimum requirements
                 symbol_info = self.client.get_symbol_info(symbol)
                 min_qty = float(next((f['minQty'] for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), 0.001))
+                min_notional = float(next((f['minNotional'] for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), 10))
 
-                # Only proceed with sell checks if we have sufficient quantity
-                if available_balance >= min_qty:
+                # Calculate if current balance meets minimum notional
+                total_notional = available_balance * current_price
+
+                # Only proceed with sell checks if we meet both minimum quantity and notional
+                if available_balance >= min_qty and total_notional >= min_notional:
                     # Check take profit and trailing stop
                     if self.check_take_profit(symbol, current_price, last_buy_price):
                         self.logger.info(f"Take profit triggered for {symbol}")
@@ -129,7 +133,10 @@ class TradeManager:
 
                     self.logger.debug(f"Holding {symbol} position. Entry: {last_buy_price}, Current: {current_price}, Highest: {highest_price}")
                 else:
-                    self.logger.info(f"Insufficient quantity to sell {symbol}. Available: {available_balance}, Minimum: {min_qty}")
+                    if available_balance < min_qty:
+                        self.logger.info(f"Insufficient quantity to sell {symbol}. Available: {available_balance}, Minimum: {min_qty}")
+                    if total_notional < min_notional:
+                        self.logger.info(f"Insufficient notional value to sell {symbol}. Current: {total_notional:.2f} USDT, Minimum: {min_notional} USDT")
                 return None
 
             # No position, check if we should buy
@@ -138,16 +145,19 @@ class TradeManager:
                 symbol_info = self.client.get_symbol_info(symbol)
                 min_notional = float(next((f['minNotional'] for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), 10))
 
+                # Add buffer to ensure we meet minimum notional after price fluctuations
+                min_notional_with_buffer = min_notional * 1.05  # Add 5% buffer
+
                 # Check USDT balance
                 balances = get_balances(self.client)
                 usdt_balance = float(balances.get('USDT', {}).get('free', 0))
 
-                # Only signal buy if we can meet minimum notional
-                if usdt_balance >= min_notional:
+                # Only signal buy if we can meet minimum notional with buffer
+                if usdt_balance >= min_notional_with_buffer:
                     self.logger.info(f"Buy signal for {symbol} at {current_price}")
                     return "BUY"
                 else:
-                    self.logger.info(f"Insufficient USDT for minimum notional. Required: {min_notional}, Available: {usdt_balance}")
+                    self.logger.info(f"Insufficient USDT for minimum notional. Required: {min_notional_with_buffer:.2f}, Available: {usdt_balance:.2f}")
 
             return None
 
@@ -230,54 +240,47 @@ class TradeManager:
                 self.logger.error(f"Could not get symbol info for {symbol}")
                 return False
 
-            # Get lot size filter
+            # Get current price for calculations
+            current_price = float(self.client.get_symbol_ticker(symbol=symbol)['price'])
+
+            # Get lot size and notional filters
             lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+            min_notional = float(next((f['minNotional'] for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), 10))
+
             if lot_size_filter:
                 min_qty = float(lot_size_filter['minQty'])
                 step_size = float(lot_size_filter['stepSize'])
                 self.logger.info(f"{symbol} - Min Qty: {min_qty}, Step Size: {step_size}")
 
-                # Round quantity to valid step size
-                quantity = round(quantity - (quantity % step_size), len(str(step_size).split('.')[1]))
-                if quantity < min_qty:
-                    self.logger.error(f"Quantity {quantity} is below minimum {min_qty} for {symbol}")
+                # Get available balance
+                balances = get_balances(self.client)
+                asset = symbol.replace('USDT', '')
+                available_balance = float(balances.get(asset, {}).get('free', 0))
+
+                # Calculate the maximum quantity we can sell (entire balance)
+                max_quantity = available_balance
+
+                # Round to step size
+                max_quantity = round(max_quantity - (max_quantity % step_size), len(str(step_size).split('.')[1]))
+
+                # Calculate notional value
+                notional_value = max_quantity * current_price
+
+                # Check if even maximum quantity meets minimum requirements
+                if max_quantity < min_qty:
+                    self.logger.error(f"Maximum quantity {max_quantity} is below minimum {min_qty} for {symbol}")
                     return False
 
-            # Check if we have enough balance
-            balances = get_balances(self.client)
-            asset = symbol.replace('USDT', '')
-            available_balance = float(balances.get(asset, {}).get('free', 0))
-
-            if available_balance < quantity:
-                self.logger.error(f"Insufficient balance. Required: {quantity} {asset}, Available: {available_balance} {asset}")
-                return False
-
-            # Get current price and calculate notional value
-            current_price = float(self.client.get_symbol_ticker(symbol=symbol)['price'])
-            total_notional = quantity * current_price
-            self.logger.info(f"Attempting to sell {quantity} {symbol} at {current_price}, Total Notional: {total_notional}")
-
-            # Check minimum notional
-            min_notional_value = float(next((f['minNotional'] for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), 10))
-            self.logger.info(f"Minimum notional value for {symbol}: {min_notional_value}")
-
-            if total_notional < min_notional_value:
-                # Try to sell entire balance if available
-                if available_balance > quantity:
-                    adjusted_quantity = available_balance
-                    total_notional = adjusted_quantity * current_price
-                    if total_notional >= min_notional_value:
-                        self.logger.info(f"Adjusting quantity from {quantity} to {adjusted_quantity} to meet minimum notional")
-                        quantity = adjusted_quantity
-                    else:
-                        self.logger.error(f"Even full balance ({available_balance}) doesn't meet minimum notional")
-                        return False
-                else:
-                    self.logger.error(f"Order value {total_notional} is below minimum {min_notional_value} USDT")
+                if notional_value < min_notional:
+                    self.logger.error(f"Maximum notional value {notional_value:.2f} USDT is below minimum {min_notional} USDT")
                     return False
+
+                # Use maximum quantity for the sell order
+                quantity = max_quantity
+
+            self.logger.info(f"Attempting to sell {quantity} {symbol} at {current_price}, Total Notional: {quantity * current_price:.2f}")
 
             # Create the order
-            self.logger.info(f"Creating market sell order: {symbol}, quantity: {quantity}")
             order = self.client.create_order(
                 symbol=symbol,
                 side='SELL',
@@ -330,14 +333,18 @@ class TradeManager:
             self.logger.info(f"Minimum notional value for {symbol}: {min_notional_value}")
 
             if total_notional < min_notional_value:
-                # Try to adjust quantity to meet minimum notional
-                adjusted_quantity = (min_notional_value + 0.1) / current_price  # Add small buffer
-                adjusted_quantity = round(adjusted_quantity - (adjusted_quantity % step_size), len(str(step_size).split('.')[1]))
-                if adjusted_quantity >= min_qty:
-                    self.logger.info(f"Adjusting quantity from {quantity} to {adjusted_quantity} to meet minimum notional")
-                    quantity = adjusted_quantity
+                # Try to sell entire balance if available
+                if available_balance > quantity:
+                    adjusted_quantity = available_balance
+                    total_notional = adjusted_quantity * current_price
+                    if total_notional >= min_notional_value:
+                        self.logger.info(f"Adjusting quantity from {quantity} to {adjusted_quantity} to meet minimum notional")
+                        quantity = adjusted_quantity
+                    else:
+                        self.logger.error(f"Even full balance ({available_balance}) doesn't meet minimum notional")
+                        return False
                 else:
-                    self.logger.error(f"Cannot adjust quantity to meet minimum notional while maintaining minimum quantity")
+                    self.logger.error(f"Order value {total_notional} is below minimum {min_notional_value} USDT")
                     return False
 
             # Create the order
