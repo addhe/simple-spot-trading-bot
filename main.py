@@ -13,6 +13,8 @@ import argparse
 import requests
 import sys
 import logging
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from config.settings import (
     API_KEY,
@@ -20,552 +22,304 @@ from config.settings import (
     BASE_URL,
     TELEGRAM_TOKEN,
     TELEGRAM_GROUP_ID,
-    SYMBOL_CONFIG,
+    SYMBOLS,
     INTERVAL,
     CACHE_LIFETIME,
+    MAX_RETRIES,
+    RETRY_BACKOFF,
     BUY_MULTIPLIER,
     SELL_MULTIPLIER,
-    MIN_VOLUME_MULTIPLIER,
-    MIN_POSITION_SIZE,
-    MIN_24H_VOLUME,
-    MARKET_VOLATILITY_LIMIT,
-    TRAILING_STOP,
-    TAKE_PROFIT,
-    MIN_TRADE_AMOUNT,
-    MAX_INVESTMENT_PER_TRADE,
-    RSI_OVERSOLD,
-    MIN_USDT_BALANCE
+    TOLERANCE
+)
+from src.send_telegram_message import send_telegram_message
+
+# Membuat folder logs jika belum ada
+log_directory = 'logs/bot'
+if not os.path.exists(log_directory):
+    os.makedirs(log_directory)
+
+# Konfigurasi logging untuk menulis ke file di folder logs/bot
+log_file = os.path.join(log_directory, 'bot.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
 )
 
-from src.logger import logger
-from src.get_balances import get_balances
-from src.db_manager import DatabaseManager
-from src.trade_manager import TradeManager
-from src.send_telegram_message import send_telegram_message
-from src.historical_data import HistoricalDataCollector
+# Inisialisasi klien Binance
+client = Client(api_key=API_KEY, api_secret=API_SECRET)
 
-class TradingBot:
-    def __init__(self):
-        """Initialize trading bot with configuration"""
-        # Initialize logger
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.DEBUG)  # Set logger to DEBUG level
-        self.logger.info("Initializing trading bot...")
+# Inisialisasi koneksi database SQLite
+DB_NAME = 'table_transactions.db'
+conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+cursor = conn.cursor()
 
-        # Configure logging
-        logging.basicConfig(
-            level=logging.DEBUG,  # Set root logger to DEBUG level
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('logs/bot/bot.log'),
-                logging.StreamHandler()
-            ]
+# Membuat tabel transactions jika belum ada
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT,
+    symbol TEXT,
+    type TEXT,
+    quantity REAL,
+    price REAL
+)
+''')
+conn.commit()
+
+# Fungsi untuk membeli aset
+def buy_asset(symbol, quantity):
+    try:
+        order = client.order_market_buy(
+            symbol=symbol,
+            quantity=quantity
         )
+        logging.info(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        send_telegram_message(f"Beli {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        save_transaction(symbol, 'buy', quantity, float(order['fills'][0]['price']))
+        return order
+    except (BinanceAPIException, BinanceOrderException) as e:
+        logging.error(f"Gagal membeli {symbol}: {e}")
+        send_telegram_message(f"Gagal membeli {symbol}: {e}")
+        return None
 
-        # Initialize database manager
-        self.db_manager = DatabaseManager('trading_data.db')
-        self.db_manager.initialize_database()  # Initialize database tables
+# Fungsi untuk menjual aset
+def sell_asset(symbol, quantity):
+    try:
+        order = client.order_market_sell(
+            symbol=symbol,
+            quantity=quantity
+        )
+        logging.info(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        send_telegram_message(f"Jual {quantity} {symbol} pada harga {order['fills'][0]['price']}")
+        save_transaction(symbol, 'sell', quantity, float(order['fills'][0]['price']))
+        return order
+    except (BinanceAPIException, BinanceOrderException) as e:
+        logging.error(f"Gagal menjual {symbol}: {e}")
+        send_telegram_message(f"Gagal menjual {symbol}: {e}")
+        return None
 
-        # Initialize Binance client
-        self.initialize_client()
+# Fungsi untuk mendapatkan harga terakhir
+def get_last_price(symbol):
+    try:
+        ticker = client.get_symbol_ticker(symbol=symbol)
+        return float(ticker['price'])
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan harga terakhir untuk {symbol}: {e}")
+        return None
 
-        # Initialize historical data collector
-        self.historical_collector = HistoricalDataCollector(self.client, self.db_manager)
+# Fungsi untuk mendapatkan saldo
+def get_balances():
+    try:
+        balances = client.get_account()['balances']
+        usdt_balance = next((item for item in balances if item['asset'] == 'USDT'), None)
+        usdt_free = float(usdt_balance['free']) if usdt_balance else 0.0
+        asset_balances = {item['asset']: float(item['free']) for item in balances if item['asset'] in ['BTC', 'ETH', 'SOL']}
+        return usdt_free, asset_balances
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan saldo: {e}")
+        return 0.0, {}
 
-        # Initialize trade manager
-        self.trade_manager = TradeManager(self.db_manager, self.client)
+# Fungsi untuk mendapatkan informasi simbol
+def get_symbol_info(symbol):
+    try:
+        symbol_info = client.get_symbol_info(symbol)
+        for filter_info in symbol_info['filters']:
+            if filter_info['filterType'] == 'LOT_SIZE':
+                step_size = float(filter_info['stepSize'])
+                min_qty = float(filter_info['minQty'])
+                max_qty = float(filter_info['maxQty'])
+                return step_size, min_qty, max_qty
+        logging.error(f"Tidak ditemukan stepSize, minQty, atau maxQty untuk simbol {symbol}")
+        return None, None, None
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan informasi simbol untuk {symbol}: {e}")
+        return None, None, None
 
-        # Collect initial historical data
-        for symbol in SYMBOL_CONFIG:
-            self.historical_collector.collect_historical_data(symbol)
+# Fungsi untuk membulatkan jumlah aset sesuai dengan presisi yang diizinkan
+def round_quantity(quantity, step_size):
+    return round(quantity / step_size) * step_size
 
-        # Initialize trading pairs and parameters
-        self.trading_pairs = list(SYMBOL_CONFIG.keys())
-        self.min_trade_amount = MIN_TRADE_AMOUNT
-        self.min_24h_volumes = MIN_24H_VOLUME
-        self.buy_multiplier = BUY_MULTIPLIER
-        self.sell_multiplier = SELL_MULTIPLIER
-        self.trailing_stop = TRAILING_STOP
-        self.take_profit = TAKE_PROFIT
+# Fungsi untuk memeriksa apakah saldo cukup untuk membeli aset
+def can_buy_asset(usdt_free, last_price, quantity):
+    return usdt_free >= last_price * quantity
 
-        # Initialize balances
-        self.update_balances()
+# Fungsi untuk menyimpan transaksi ke database
+def save_transaction(symbol, type, quantity, price):
+    try:
+        cursor.execute('''
+            INSERT INTO transactions (timestamp, symbol, type, quantity, price)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (time.strftime('%Y-%m-%d %H:%M:%S'), symbol, type, quantity, price))
+        conn.commit()
+        logging.info(f"Transaksi {type} {quantity} {symbol} pada harga {price} disimpan ke database")
+    except sqlite3.Error as e:
+        logging.error(f"Gagal menyimpan transaksi ke database: {e}")
 
-        # Initialize thread status and error tracking
-        self.thread_status = {
-            'main_thread': True,
-            'error_thread': True
-        }
-        self.error_count = 0
-        self.last_error_time = None
-        self.logger.info(f"Initialized trading pairs: {self.trading_pairs}")
-        self.logger.info("Trading bot initialized successfully")
+# Fungsi untuk memuat riwayat transaksi dari database
+def load_transactions():
+    try:
+        cursor.execute('SELECT symbol, type, quantity, price FROM transactions')
+        transactions = cursor.fetchall()
+        return transactions
+    except sqlite3.Error as e:
+        logging.error(f"Gagal memuat riwayat transaksi dari database: {e}")
+        return []
 
-    def initialize_client(self):
-        """Initialize Binance client"""
-        if not API_KEY or not API_SECRET:
-            self.logger.error("API Key and Secret not found! Make sure they are set in environment variables.")
-            raise ValueError("Missing API credentials")
+# Fungsi untuk mengirimkan status saldo setiap satu jam
+def send_status_update():
+    usdt_free, asset_balances = get_balances()
+    status_message = f"Status Saldo:\nSaldo USDT: {usdt_free}\nSaldo Aset: {asset_balances}"
+    logging.info(status_message)
+    send_telegram_message(status_message)
 
-        try:
-            self.client = Client(api_key=API_KEY, api_secret=API_SECRET)
-            if BASE_URL:
-                self.client.API_URL = BASE_URL
-            self.logger.info("Successfully initialized Binance client")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Binance client: {e}")
-            raise
+# Fungsi untuk memeriksa apakah ada pending order
+def has_pending_orders():
+    try:
+        open_orders = client.get_open_orders()
+        return len(open_orders) > 0
+    except BinanceAPIException as e:
+        logging.error(f"Gagal mendapatkan open orders: {e}")
+        return False
 
-    def update_balances(self):
-        """Update current balances"""
-        try:
-            self.balances = get_balances(self.client)
-            if self.balances:
-                self.logger.info(f"Retrieved balances: {self.balances}")
-                initial_value = self.calculate_total_value(self.balances)
-                self.logger.info(f"Current portfolio value: {initial_value} USDT")
-                return True
-            else:
-                self.logger.error("Failed to get balances")
-                return False
-        except Exception as e:
-            self.logger.error(f"Error updating balances: {e}")
-            return False
+# Inisialisasi FastAPI
+app = FastAPI()
 
-    def process_symbol_trade(self, symbol, usdt_per_symbol, balances):
-        """Process trades for configured trading pairs"""
-        try:
-            # Get current market price
-            current_price = self.get_current_market_price(symbol)
-            if not current_price:
-                self.logger.error(f"Could not get current price for {symbol}")
-                return
+# Model Pydantic untuk request body
+class BuyRequest(BaseModel):
+    symbol: str
+    quantity: float
 
-            # Get asset info
-            base_asset, _ = self.get_symbol_info(symbol)
-            
-            # Check balances
-            has_usdt, usdt_balance = self.check_buy_balance(balances)
-            has_asset, asset_balance = self.check_sell_balance(symbol, balances)
-            
-            self.logger.debug(f"Balance Check for {symbol}:")
-            self.logger.debug(f"USDT - Available: ${usdt_balance:.2f}, Sufficient: {has_usdt}")
-            self.logger.debug(f"{base_asset} - Available: {asset_balance}, Sufficient: {has_asset}")
+class SellRequest(BaseModel):
+    symbol: str
+    quantity: float
 
-            # Get buy/sell decision
-            buy_decision = self.trade_manager.should_buy(symbol, current_price)
-            self.logger.debug(f"Buy decision for {symbol}: {buy_decision}")
+# API untuk melakukan pembelian
+@app.post("/buy/")
+async def buy(request: BuyRequest):
+    symbol = request.symbol
+    quantity = request.quantity
 
-            # Determine trade action based on balances and decision
-            if buy_decision:
-                if has_usdt:
-                    # Calculate buy quantity based on available USDT
-                    buy_quantity = self.calculate_position_size(symbol, current_price, usdt_balance)
-                    if buy_quantity > 0:
-                        self.logger.info(f"Executing buy order for {symbol}: {buy_quantity} @ ${current_price:.2f}")
-                        self.trade_manager.execute_buy(symbol, buy_quantity)
-                    else:
-                        self.send_no_trade_notification(symbol, f"Calculated buy quantity too small")
-                else:
-                    self.send_no_trade_notification(symbol, f"Insufficient USDT balance (${usdt_balance:.2f}) for buying")
-            else:
-                # Only attempt to sell if we actually own the asset
-                if has_asset and asset_balance > 0:
-                    self.logger.info(f"Executing sell order for {symbol}: {asset_balance} @ ${current_price:.2f}")
-                    self.trade_manager.execute_sell(symbol, asset_balance)
-                else:
-                    # Don't send notification if we don't own the asset and aren't trying to buy
-                    self.logger.debug(f"No {base_asset} balance to sell and conditions don't favor buying")
+    if has_pending_orders():
+        logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
+        return {"message": "Ada pending order, menunggu 5 menit sebelum melanjutkan."}
 
-        except Exception as e:
-            self.logger.error(f"Error processing trade for {symbol}: {e}")
-            self.handle_symbol_error(symbol, e)
+    last_price = get_last_price(symbol)
+    if last_price is None:
+        return {"message": f"Gagal mendapatkan harga terakhir untuk {symbol}"}
 
-    def send_no_trade_notification(self, symbol, reason):
-        message = f"📉 Trading Alert for {symbol}: {reason}"
-        send_telegram_message(message)
+    step_size, min_qty, max_qty = get_symbol_info(symbol)
+    if step_size is not None and min_qty is not None and max_qty is not None:
+        quantity = round_quantity(quantity, step_size)
+        quantity = max(quantity, min_qty)
+        quantity = min(quantity, max_qty)
 
-    def cleanup(self):
-        """Cleanup resources"""
-        try:
-            # Cancel any pending orders
-            for symbol in SYMBOL_CONFIG:
-                try:
-                    self.client.cancel_open_orders(symbol=symbol)
-                except Exception:
-                    pass  # Ignore errors during cleanup
+        if quantity > 0 and can_buy_asset(*get_balances(), last_price, quantity):
+            buy_asset(symbol, quantity)
+            return {"message": f"Beli {quantity} {symbol} berhasil"}
+        else:
+            return {"message": f"Tidak cukup saldo untuk membeli {quantity} {symbol}"}
+    else:
+        return {"message": f"Tidak ditemukan informasi simbol untuk {symbol}"}
 
-            # Close database connection
-            self.db_manager.close_connection()
+# API untuk melakukan penjualan
+@app.post("/sell/")
+async def sell(request: SellRequest):
+    symbol = request.symbol
+    quantity = request.quantity
 
-        except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}")
+    if has_pending_orders():
+        logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
+        return {"message": "Ada pending order, menunggu 5 menit sebelum melanjutkan."}
 
-    def get_current_market_price(self, symbol):
-        """
-        Improved market price retrieval with proper error handling
-        """
-        normalized_symbol = self.get_normalized_symbol(symbol)
-        try:
-            ticker = self.client.get_ticker(symbol=normalized_symbol)
-            return float(ticker['lastPrice'])
-        except BinanceAPIException as e:
-            self.logger.error(f"Binance API error getting price for {normalized_symbol}: {e}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Unexpected error getting price for {normalized_symbol}: {e}")
-            return None
+    asset = symbol.replace('USDT', '')
+    asset_balances = get_balances()[1]
+    asset_balance = asset_balances.get(asset, 0.0)
 
-    def get_normalized_symbol(self, symbol):
-        """
-        Ensures consistent symbol format for Binance API calls
-        """
-        if not symbol.endswith('USDT'):
-            return f"{symbol}USDT"
-        return symbol
+    if asset_balance == 0.0:
+        return {"message": f"Tidak memiliki aset {asset} untuk dijual"}
 
-    def check_symbol_balance(self, symbol, balances, current_price):
-        base_asset, quote_asset = self.get_symbol_info(symbol)
-        # Now pass symbol and current_price to should_buy()
-        should_buy = self.trade_manager.should_buy(symbol, current_price)
-        relevant_asset = quote_asset if should_buy else base_asset
-        if relevant_asset in balances:
-            balance = balances[relevant_asset]['free']
-            return (True, balance) if balance > 0 else (False, 0)
-        return False, 0
+    if quantity > asset_balance:
+        return {"message": f"Jumlah {quantity} {asset} melebihi saldo yang tersedia"}
 
-    def check_buy_balance(self, balances):
-        """Check if there is enough USDT balance for buying"""
-        self.logger.debug(f"Checking USDT balance in balances: {balances.get('USDT', {})}")
-        
-        if 'USDT' not in balances:
-            self.logger.debug("No USDT found in balances")
-            return False, 0
-            
-        usdt_balance = float(balances['USDT']['free'])
-        self.logger.debug(f"Available USDT balance: ${usdt_balance:.2f}")
-        
-        # Check if balance meets minimum requirements
-        min_required = MAX_INVESTMENT_PER_TRADE  # Use max investment as minimum required
-        if usdt_balance < min_required:
-            self.logger.debug(f"USDT balance (${usdt_balance:.2f}) below minimum required (${min_required:.2f})")
-            return False, usdt_balance
-            
-        self.logger.debug(f"USDT balance (${usdt_balance:.2f}) is sufficient for trading")
-        return True, usdt_balance
+    sell_asset(symbol, quantity)
+    return {"message": f"Jual {quantity} {symbol} berhasil"}
 
-    def check_sell_balance(self, symbol, balances):
-        """Check if there is enough base asset balance for selling"""
-        base_asset, _ = self.get_symbol_info(symbol)
-        self.logger.debug(f"Checking {base_asset} balance in balances: {balances.get(base_asset, {})}")
-        
-        if base_asset not in balances:
-            self.logger.debug(f"No {base_asset} found in balances")
-            return False, 0
-            
-        asset_balance = float(balances[base_asset]['free'])
-        self.logger.debug(f"Available {base_asset} balance: {asset_balance}")
-        
-        # Check if balance meets minimum requirements
-        min_required = MIN_TRADE_AMOUNT.get(symbol, 0)
-        if asset_balance < min_required:
-            self.logger.debug(f"{base_asset} balance ({asset_balance}) below minimum required ({min_required})")
-            return False, asset_balance
-            
-        self.logger.debug(f"{base_asset} balance ({asset_balance}) is sufficient for trading")
-        return True, asset_balance
+# API untuk melakukan pengecekan saldo
+@app.get("/balance/")
+async def get_balance():
+    usdt_free, asset_balances = get_balances()
+    return {
+        "usdt_free": usdt_free,
+        "asset_balances": asset_balances
+    }
 
-    def get_symbol_info(self, symbol):
-        """
-        Get detailed information about a trading symbol
-        Returns base symbol and quote symbol
-        """
-        if symbol not in self.trading_pairs:
-            self.logger.error(f"Symbol {symbol} not in configured trading pairs")
-            return None, None
+# Fungsi untuk menjalankan bot secara berkelanjutan
+def run_bot():
+    last_status_update = time.time()
+    transactions = load_transactions()
+    buy_prices = {symbol: None for symbol in SYMBOLS}
 
-        config = SYMBOL_CONFIG.get(symbol)
-        if not config:
-            self.logger.error(f"No configuration found for symbol {symbol}")
-            return None, None
+    while True:
+        if has_pending_orders():
+            logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
+            time.sleep(CACHE_LIFETIME)  # 5 menit
+            continue
 
-        return config['base_asset'], config['quote_asset']
+        usdt_free, asset_balances = get_balances()
+        logging.info(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
+        send_telegram_message(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
 
-    def calculate_total_value(self, balances):
-        """Calculate total portfolio value in USDT"""
-        total_value = 0.0
+        # Bagi saldo USDT merata antara semua simbol
+        usdt_per_symbol = usdt_free / len(SYMBOLS)
 
-        # Add USDT balance
-        usdt_balance = float(balances.get('USDT', {}).get('free', 0))
-        total_value += usdt_balance
-        self.logger.debug(f"USDT balance: {usdt_balance}")
-
-        # Calculate value of other assets
-        for symbol in self.trading_pairs:
-            try:
-                base_asset, _ = self.get_symbol_info(symbol)
-                if base_asset in balances:
-                    asset_balance = float(balances[base_asset]['free'])
-                    if asset_balance > 0:
-                        # Get current price
-                        current_price = self.get_current_market_price(symbol)
-                        if current_price:
-                            asset_value = asset_balance * current_price
-                            total_value += asset_value
-                            self.logger.debug(f"Added {base_asset} value: {asset_value:.2f} USDT")
-                        else:
-                            self.logger.warning(f"Could not get current price for {symbol}")
-                    else:
-                        self.logger.debug(f"Zero balance for {base_asset}")
-                else:
-                    self.logger.debug(f"No balance entry for {base_asset}")
-            except Exception as e:
-                self.logger.error(f"Error calculating value for {symbol}: {e}")
+        for symbol in SYMBOLS:
+            last_price = get_last_price(symbol)
+            if last_price is None:
                 continue
 
-        return total_value
+            asset = symbol.replace('USDT', '')
+            asset_balance = asset_balances.get(asset, 0.0)
 
-    def should_buy(self, symbol, current_price):
-        """Determine whether to buy based on technical analysis"""
-        try:
-            conn = self.db_manager.get_connection()
-            query = f'''
-                SELECT timestamp, close_price, volume
-                FROM historical_data
-                WHERE symbol = '{symbol}'
-                ORDER BY timestamp DESC
-                LIMIT 500
-            '''
-            df = pd.read_sql_query(query, conn)
-            conn.close()
+            if asset_balance == 0.0:
+                # Membeli aset jika tidak memiliki aset tersebut
+                quantity = usdt_per_symbol * BUY_MULTIPLIER / last_price
+                step_size, min_qty, max_qty = get_symbol_info(symbol)
 
-            if len(df) < 50:
-                self.logger.debug(f"{symbol}: Not enough historical data for analysis (only {len(df)} records)")
-                return False
+                if step_size is not None and min_qty is not None and max_qty is not None:
+                    quantity = round_quantity(quantity, step_size)
+                    quantity = max(quantity, min_qty)
+                    quantity = min(quantity, max_qty)
 
-            # Calculate basic indicators
-            df['MA_50'] = df['close_price'].rolling(window=50).mean()
-            df['MA_200'] = df['close_price'].rolling(window=200).mean()
-            df['RSI'] = _calculate_rsi(df['close_price'])
-
-            # Calculate Bollinger Bands
-            df['BB_upper'], df['BB_middle'], df['BB_lower'] = self._calculate_bollinger_bands(df['close_price'])
-
-            # Calculate MACD
-            df['MACD'], df['MACD_signal'] = self._calculate_macd(df['close_price'])
-            df['MACD_hist'] = df['MACD'] - df['MACD_signal']
-
-            latest = df.iloc[-1]
-
-            # Log all indicators for debugging
-            self.logger.debug(f"Technical Analysis for {symbol}:")
-            self.logger.debug(f"Current Price: ${current_price:.2f}")
-            self.logger.debug(f"MA50: ${latest['MA_50']:.2f}")
-            self.logger.debug(f"MA200: ${latest['MA_200']:.2f}")
-            self.logger.debug(f"RSI: {latest['RSI']:.2f}")
-            self.logger.debug(f"BB Lower: ${latest['BB_lower']:.2f}")
-            self.logger.debug(f"MACD Histogram: {latest['MACD_hist']:.4f}")
-
-            # Enhanced decision logic with more lenient conditions
-            buy_signals = 0
-            required_signals = 2  # Reduced from 3 to make it more sensitive
-
-            # RSI oversold condition (weight: 2)
-            if latest['RSI'] < RSI_OVERSOLD:
-                buy_signals += 2
-                self.logger.debug(f"✅ RSI is oversold ({latest['RSI']:.2f} < {RSI_OVERSOLD})")
+                    if quantity > 0 and can_buy_asset(usdt_free, last_price, quantity):
+                        buy_asset(symbol, quantity)
+                        buy_prices[symbol] = last_price
+                        time.sleep(CACHE_LIFETIME)  # 5 menit
             else:
-                self.logger.debug(f"❌ RSI not oversold ({latest['RSI']:.2f} >= {RSI_OVERSOLD})")
+                # Menjual aset jika harga naik 3%
+                sell_price = last_price * SELL_MULTIPLIER
+                if sell_price >= last_price * (1 + TOLERANCE):
+                    buy_price = buy_prices.get(symbol, None)
+                    if buy_price is not None and sell_price > buy_price:
+                        sell_asset(symbol, asset_balance)
+                        time.sleep(CACHE_LIFETIME)  # 5 menit
 
-            # Price near or below lower Bollinger Band (weight: 2)
-            bb_threshold = latest['BB_lower'] * 1.01  # Allow price to be slightly above BB lower
-            if current_price <= bb_threshold:
-                buy_signals += 2
-                self.logger.debug(f"✅ Price near/below BB lower (${current_price:.2f} <= ${bb_threshold:.2f})")
-            else:
-                self.logger.debug(f"❌ Price above BB lower (${current_price:.2f} > ${bb_threshold:.2f})")
+        # Mengirimkan status saldo setiap satu jam
+        if time.time() - last_status_update >= 3600:  # 3600 detik = 1 jam
+            send_status_update()
+            last_status_update = time.time()
 
-            # MACD momentum (weight: 1)
-            if df['MACD_hist'].iloc[-1] > df['MACD_hist'].iloc[-2]:
-                buy_signals += 1
-                self.logger.debug("✅ MACD momentum is positive")
-            else:
-                self.logger.debug("❌ MACD momentum is negative")
+        time.sleep(CACHE_LIFETIME)
 
-            # Price between MAs (weight: 1)
-            if current_price > latest['MA_200'] and current_price < latest['MA_50']:
-                buy_signals += 1
-                self.logger.debug(f"✅ Price between MA200 and MA50")
-            else:
-                self.logger.debug(f"❌ Price not between MA200 and MA50")
+# Menjalankan bot dalam thread terpisah
+bot_thread = threading.Thread(target=run_bot)
+bot_thread.daemon = True
+bot_thread.start()
 
-            should_buy = buy_signals >= required_signals
-            self.logger.info(f"{symbol} Buy Decision: {should_buy} (Signals: {buy_signals}/{required_signals})")
-            return should_buy
-
-        except Exception as e:
-            self.logger.error(f"Error in should_buy for {symbol}: {str(e)}")
-            return False
-
-    def _calculate_bollinger_bands(self, prices, window=20, num_std=2):
-        """Calculate Bollinger Bands"""
-        rolling_mean = prices.rolling(window=window).mean()
-        rolling_std = prices.rolling(window=window).std()
-        upper_band = rolling_mean + (rolling_std * num_std)
-        lower_band = rolling_mean - (rolling_std * num_std)
-        return upper_band, rolling_mean, lower_band
-
-    def _calculate_macd(self, prices, fast=12, slow=26, signal=9):
-        """Calculate MACD"""
-        exp1 = prices.ewm(span=fast, adjust=False).mean()
-        exp2 = prices.ewm(span=slow, adjust=False).mean()
-        macd = exp1 - exp2
-        signal_line = macd.ewm(span=signal, adjust=False).mean()
-        return macd, signal_line
-
-    def calculate_position_size(self, symbol, current_price, usdt_per_symbol):
-        _, quote_asset = self.get_symbol_info(symbol)
-        usdt_balance = self.check_symbol_balance(symbol, self.balances)[1]
-
-        # Ensure we don't exceed available USDT
-        position_size_usdt = min(usdt_per_symbol, usdt_balance)
-        position_size = position_size_usdt / current_price
-        return round(position_size, 4)
-
-    def trade(self):
-        """Execute trading strategy"""
-        try:
-            # Update balances first
-            if not self.update_balances():
-                self.logger.error("Failed to update balances, skipping trade cycle")
-                return
-
-            for symbol in self.trading_pairs:
-                try:
-                    # Get current market price
-                    current_price = self.get_current_market_price(symbol)
-                    if not current_price:
-                        continue
-
-                    # Get trading decision
-                    decision = self.trade_manager.process_trade(symbol, current_price)
-                    
-                    if decision == "BUY":
-                        # Calculate position size based on available USDT
-                        usdt_balance = float(self.balances.get('USDT', {}).get('free', 0))
-                        position_size = min(usdt_balance * 0.95, MAX_INVESTMENT_PER_TRADE) / current_price
-                        
-                        if position_size * current_price >= MIN_TRADE_AMOUNT:
-                            if self.trade_manager.execute_buy(symbol, position_size):
-                                self.update_balances()  # Update balances after successful trade
-                        else:
-                            self.logger.info(f"Position size too small for {symbol}")
-                    
-                    elif decision == "SELL":
-                        base_asset = SYMBOL_CONFIG[symbol]['base_asset']
-                        position_size = float(self.balances.get(base_asset, {}).get('free', 0))
-                        
-                        if position_size * current_price >= MIN_TRADE_AMOUNT:
-                            if self.trade_manager.execute_sell(symbol, position_size):
-                                self.update_balances()  # Update balances after successful trade
-                        else:
-                            self.logger.info(f"Position size too small for {symbol}")
-
-                except Exception as e:
-                    self.logger.error(f"Error processing {symbol}: {e}")
-                    self.error_count += 1
-                    self.last_error_time = time.time()
-                    
-                    if self.error_count >= 3:
-                        self.logger.error(f"Disabling trading for {symbol} due to excessive errors")
-                        send_telegram_message(f"⚠️ Trading disabled for {symbol} due to excessive errors")
-                        if symbol in self.trading_pairs:
-                            self.trading_pairs.remove(symbol)
-
-        except Exception as e:
-            self.logger.error(f"Error in trade function: {e}")
-
-    def run(self):
-        """Run the trading bot"""
-        try:
-            self.logger.info("Starting trading bot...")
-            while self.thread_status['main_thread']:
-                try:
-                    self.trade()
-                    time.sleep(10)  # Wait 10 seconds between iterations
-                except Exception as e:
-                    self.logger.error(f"Error in main loop: {e}")
-                    time.sleep(10)  # Wait before retrying
-        except Exception as e:
-            self.logger.error(f"Fatal error in run: {e}")
-        finally:
-            self.shutdown()
-
-    def shutdown(self):
-        """Shutdown the bot gracefully"""
-        try:
-            self.logger.info("Initiating bot shutdown...")
-            
-            # Stop all threads
-            for key in self.thread_status:
-                self.thread_status[key] = False
-            
-            # Cleanup resources
-            self.cleanup()
-            
-            self.logger.info("Bot shutdown complete")
-        except Exception as e:
-            self.logger.error(f"Error during shutdown: {e}")
-
-    def _check_internet_connection(self):
-        """Check if internet connection is available"""
-        try:
-            requests.get("https://api.binance.com", timeout=5)
-            return True
-        except requests.RequestException:
-            return False
-
-    def handle_symbol_error(self, symbol, error):
-        """Handle errors for specific symbols"""
-        self.error_counts[symbol] += 1
-        if self.error_counts[symbol] >= self.MAX_ERRORS:
-            self.logger.error(f"Disabling trading for {symbol} due to excessive errors")
-            send_telegram_message(f"⚠️ Trading disabled for {symbol} due to excessive errors")
-
-def status_monitor(bot):
-    """Monitor and report bot status"""
-    while bot.thread_status['status_thread']:
-        try:
-            bot.send_status_update()
-            time.sleep(60)  # Update every minute
-        except Exception as e:
-            bot.logger.error(f"Error in status monitor: {e}")
-            time.sleep(5)  # Short delay on error
-
-def main():
-    """Main entry point for the trading bot"""
-    parser = argparse.ArgumentParser(description="Trading Bot Runner")
-    parser.add_argument("--simulate", action="store_true", help="Run in simulation mode")
-    args = parser.parse_args()
-
-    try:
-        bot = TradingBot()
-        if args.simulate:
-            bot.simulate = True
-            logger.info("Running in simulation mode")
-
-        bot.run()
-    except Exception as e:
-        logger.critical(f"Failed to start trading bot: {e}")
-        sys.exit(1)
-
+# Menjalankan FastAPI
 if __name__ == "__main__":
-    try:
-        bot = TradingBot()
-        bot.run()
-    except KeyboardInterrupt:
-        bot.shutdown()
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-        if hasattr(bot, 'shutdown'):
-            bot.shutdown()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
