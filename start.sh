@@ -4,7 +4,7 @@
 BOT_NAME="crypto_bot"
 
 # Direktori tempat skrip main.py berada
-SCRIPT_DIR="/Users/ditd23537/Workspaces/learning/simple-spot-trading-bot"
+SCRIPT_DIR="/root/simple-spot-trading-bot"
 
 # Jalankan bot di latar belakang dan simpan PID ke file
 nohup python3 $SCRIPT_DIR/main.py > $SCRIPT_DIR/logs/bot/bot.out 2>&1 &
