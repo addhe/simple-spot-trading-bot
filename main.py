@@ -113,6 +113,7 @@ def get_balances():
 def get_symbol_info(symbol):
     try:
         symbol_info = client.get_symbol_info(symbol)
+        step_size = min_qty = max_qty = min_notional = None  # Initialize all
         for filter_info in symbol_info['filters']:
             if filter_info['filterType'] == 'LOT_SIZE':
                 step_size = float(filter_info['stepSize'])
