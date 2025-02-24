@@ -10,12 +10,12 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
 TELEGRAM_GROUP_ID = os.getenv('TELEGRAM_GROUP_ID_PROD', '')
 
 # Trading Pairs Configuration
-SYMBOLS = ['ETHUSDT', 'SOLUSDT']
+SYMBOLS = ['ETHUSDT', 'SOLUSDT', 'BTCUSDT']
 
 # Minimum Trade Amount in Base Currency
 MIN_TRADE_AMOUNT = {
-    'ETHUSDT': 0.001,   # Minimum ETH
-    'SOLUSDT': 0.1      # Minimum SOL
+    'ETHUSDT': 0.001,     # Minimum ETH
+    'SOLUSDT': 0.001      # Minimum SOL
 }
 
 # Volume Requirements (adjusted for current market conditions)
@@ -120,6 +120,12 @@ VOLUME_MA_PERIOD = 24              # 24 periods for volume moving average
 # Database Configuration
 DB_FILE = 'table_transactions.db'
 MAX_DATABASE_RETRIES = 3       # Maximum database connection retries
+
+# Minimum Notional Values for Trading Pairs
+MIN_NOTIONAL_VALUE = {
+    'ETHUSDT': 10,  # Example minimum notional value for ETHUSDT
+    'SOLUSDT': 10   # Example minimum notional value for SOLUSDT
+}
 
 # Persentase kenaikan harga jual
 SELL_THRESHOLD_PERCENTAGE = 0.02  # Persentase kenaikan harga untuk melakukan penjualan (5%)

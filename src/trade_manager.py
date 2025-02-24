@@ -1,6 +1,6 @@
 from src.logger import logger
 from src.get_balances import get_balances
-from config.settings import TAKE_PROFIT, TRAILING_STOP
+from config.settings import TAKE_PROFIT, TRAILING_STOP, MIN_NOTIONAL_VALUE
 import pandas as pd
 
 class TradeManager:
@@ -96,36 +96,36 @@ class TradeManager:
         try:
             # Get last buy price and current position
             last_buy_price = self.db_manager.get_last_buy_price(symbol)
-            
+
             # Check if we have an open position
             if last_buy_price:
                 # Get highest price since buy
                 highest_price = self.db_manager.get_highest_price(symbol)
-                
+
                 # Update highest price if current price is higher
                 if current_price > highest_price:
                     self.db_manager.update_highest_price(symbol, current_price)
                     highest_price = current_price
-                
+
                 # Check take profit and trailing stop
                 if self.check_take_profit(symbol, current_price, last_buy_price):
                     self.logger.info(f"Take profit triggered for {symbol}")
                     return "SELL"
-                    
+
                 if self.check_trailing_stop(symbol, current_price, highest_price):
                     self.logger.info(f"Trailing stop triggered for {symbol}")
                     return "SELL"
-                    
+
                 self.logger.debug(f"Holding {symbol} position. Entry: {last_buy_price}, Current: {current_price}, Highest: {highest_price}")
                 return None
-            
+
             # No position, check if we should buy
             if self.should_buy(symbol, current_price):
                 self.logger.info(f"Buy signal for {symbol} at {current_price}")
                 return "BUY"
-            
+
             return None
-            
+
         except Exception as e:
             self.logger.error(f"Error processing trade for {symbol}: {e}")
             return None
@@ -199,6 +199,49 @@ class TradeManager:
     def execute_sell(self, symbol, quantity):
         """Execute a sell order"""
         try:
+            # Get symbol info for precision
+            symbol_info = self.client.get_symbol_info(symbol)
+            if not symbol_info:
+                self.logger.error(f"Could not get symbol info for {symbol}")
+                return False
+
+            # Get lot size filter
+            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+            if lot_size_filter:
+                min_qty = float(lot_size_filter['minQty'])
+                step_size = float(lot_size_filter['stepSize'])
+                self.logger.info(f"{symbol} - Min Qty: {min_qty}, Step Size: {step_size}")
+
+                # Round quantity to valid step size
+                quantity = round(quantity - (quantity % step_size), len(str(step_size).split('.')[1]))
+                if quantity < min_qty:
+                    self.logger.error(f"Quantity {quantity} is below minimum {min_qty} for {symbol}")
+                    return False
+
+            # Check if we have enough balance
+            balances = get_balances(self.client)
+            asset = symbol.replace('USDT', '')
+            available_balance = float(balances.get(asset, {}).get('free', 0))
+
+            if available_balance < quantity:
+                self.logger.error(f"Insufficient balance. Required: {quantity} {asset}, Available: {available_balance} {asset}")
+                return False
+
+            # Get current price and calculate notional value
+            current_price = float(self.client.get_symbol_ticker(symbol=symbol)['price'])
+            total_notional = quantity * current_price
+            self.logger.info(f"Attempting to sell {quantity} {symbol} at {current_price}, Total Notional: {total_notional}")
+
+            # Check minimum notional
+            min_notional_value = float(next((f['minNotional'] for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), 10))
+            self.logger.info(f"Minimum notional value for {symbol}: {min_notional_value}")
+
+            if total_notional < min_notional_value:
+                self.logger.error(f"Order value {total_notional} is below minimum {min_notional_value} USDT")
+                return False
+
+            # Create the order
+            self.logger.info(f"Creating market sell order: {symbol}, quantity: {quantity}")
             order = self.client.create_order(
                 symbol=symbol,
                 side='SELL',
@@ -216,12 +259,53 @@ class TradeManager:
             return False
 
         except Exception as e:
-            self.logger.error(f"Error executing sell for {symbol}: {e}")
+            self.logger.error(f"Error executing sell for {symbol}: {str(e)}")
             return False
 
     def execute_buy(self, symbol, quantity):
         """Execute a buy order"""
         try:
+            # Get symbol info for precision
+            symbol_info = self.client.get_symbol_info(symbol)
+            if not symbol_info:
+                self.logger.error(f"Could not get symbol info for {symbol}")
+                return False
+
+            # Get lot size filter
+            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+            if lot_size_filter:
+                min_qty = float(lot_size_filter['minQty'])
+                step_size = float(lot_size_filter['stepSize'])
+                self.logger.info(f"{symbol} - Min Qty: {min_qty}, Step Size: {step_size}")
+
+                # Round quantity to valid step size
+                quantity = round(quantity - (quantity % step_size), len(str(step_size).split('.')[1]))
+                if quantity < min_qty:
+                    self.logger.error(f"Quantity {quantity} is below minimum {min_qty} for {symbol}")
+                    return False
+
+            # Get current price and calculate notional value
+            current_price = float(self.client.get_symbol_ticker(symbol=symbol)['price'])
+            total_notional = quantity * current_price
+            self.logger.info(f"Attempting to buy {quantity} {symbol} at {current_price}, Total Notional: {total_notional}")
+
+            # Check minimum notional
+            min_notional_value = float(next((f['minNotional'] for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), 10))
+            self.logger.info(f"Minimum notional value for {symbol}: {min_notional_value}")
+
+            if total_notional < min_notional_value:
+                # Try to adjust quantity to meet minimum notional
+                adjusted_quantity = (min_notional_value + 0.1) / current_price  # Add small buffer
+                adjusted_quantity = round(adjusted_quantity - (adjusted_quantity % step_size), len(str(step_size).split('.')[1]))
+                if adjusted_quantity >= min_qty:
+                    self.logger.info(f"Adjusting quantity from {quantity} to {adjusted_quantity} to meet minimum notional")
+                    quantity = adjusted_quantity
+                else:
+                    self.logger.error(f"Cannot adjust quantity to meet minimum notional while maintaining minimum quantity")
+                    return False
+
+            # Create the order
+            self.logger.info(f"Creating market buy order: {symbol}, quantity: {quantity}")
             order = self.client.create_order(
                 symbol=symbol,
                 side='BUY',
@@ -239,5 +323,5 @@ class TradeManager:
             return False
 
         except Exception as e:
-            self.logger.error(f"Error executing buy for {symbol}: {e}")
+            self.logger.error(f"Error executing buy for {symbol}: {str(e)}")
             return False
