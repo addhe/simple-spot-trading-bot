@@ -378,25 +378,42 @@ class TradeManager:
         try:
             # Calculate USDT value
             usdt_value = quantity * current_price
+            asset = symbol.replace('USDT', '')
 
             # Check if this is truly a dust position (< $10)
             if usdt_value < 10:
                 self.logger.info(f"Attempting to handle dust position for {symbol}: {quantity} ({usdt_value:.2f} USDT)")
 
                 try:
-                    # Try to convert small balance to BNB
-                    asset = symbol.replace('USDT', '')
-                    result = self.client.transfer_dust(asset=[asset])
+                    # First check if asset is eligible for dust transfer
+                    dust_info = self.client.get_dust_assets()
+                    eligible_assets = [asset['asset'] for asset in dust_info.get('details', [])]
 
-                    if result and 'totalServiceCharge' in result:
-                        self.logger.info(f"Successfully converted {symbol} dust to BNB. Service charge: {result['totalServiceCharge']} BNB")
-                        # Reset position tracking since we've handled the dust
-                        self.db_manager.update_highest_price(symbol, 0)
-                        return True
+                    if asset in eligible_assets:
+                        # Try to convert small balance to BNB
+                        result = self.client.transfer_dust(asset=[asset])
+
+                        if result and 'totalServiceCharge' in result:
+                            self.logger.info(f"Successfully converted {symbol} dust to BNB. Service charge: {result['totalServiceCharge']} BNB")
+                            # Reset position tracking since we've handled the dust
+                            self.db_manager.update_highest_price(symbol, 0)
+                            return True
+                        else:
+                            self.logger.warning(f"Dust transfer failed for {symbol}. Response: {result}")
                     else:
-                        self.logger.warning(f"Could not convert {symbol} dust to BNB. May not be eligible for dust transfer.")
+                        self.logger.info(f"{asset} is not eligible for dust transfer. Current eligible assets: {eligible_assets}")
+
+                        # For non-eligible assets, we could implement alternative strategies here
+                        # For example:
+                        # 1. Keep track of dust positions for manual handling
+                        # 2. Try to accumulate more of the asset until it meets minimum trade requirements
+                        # 3. Consider other conversion options
+
                 except Exception as e:
-                    self.logger.error(f"Error converting dust for {symbol}: {e}")
+                    if "APIError(code=-1102)" in str(e):
+                        self.logger.warning(f"Asset {asset} is not supported for dust transfer")
+                    else:
+                        self.logger.error(f"Error converting dust for {symbol}: {e}")
 
             return False
 
