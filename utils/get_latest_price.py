@@ -1,70 +1,38 @@
-import os
-import logging
 import sqlite3
+import logging
 
-# Membuat folder logs jika belum ada
-log_directory = 'logs/utils'
-if not os.path.exists(log_directory):
-    os.makedirs(log_directory)
+# Konfigurasi logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
+                    filename='get_latest_price.log', filemode='a')  # Menyimpan log ke file
 
-# Konfigurasi logging untuk menulis ke file di folder logs/utils
-log_file = os.path.join(log_directory, 'get_latest_price.log')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-
-# Inisialisasi koneksi database SQLite
+# Nama database
 DB_NAME = 'table_transactions.db'
-conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-cursor = conn.cursor()
 
-def get_latest_buy_price(symbol):
+def get_latest_transaction(symbol, transaction_type):
     try:
-        cursor.execute('''
-            SELECT price FROM transactions
-            WHERE symbol = ? AND type = 'buy'
-            ORDER BY timestamp DESC
-            LIMIT 1
-        ''', (symbol,))
-        result = cursor.fetchone()
-        return result[0] if result else None
-    except sqlite3.Error as e:
-        logging.error(f"Gagal mendapatkan harga pembelian terakhir untuk {symbol}: {e}")
-        return None
+        # Membuka koneksi ke database
+        conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+        cursor = conn.cursor()
 
-def get_latest_sell_price(symbol):
-    try:
-        cursor.execute('''
-            SELECT price FROM transactions
-            WHERE symbol = ? AND type = 'sell'
-            ORDER BY timestamp DESC
-            LIMIT 1
-        ''', (symbol,))
-        result = cursor.fetchone()
-        return result[0] if result else None
-    except sqlite3.Error as e:
-        logging.error(f"Gagal mendapatkan harga penjualan terakhir untuk {symbol}: {e}")
-        return None
+        # Mengambil transaksi terakhir berdasarkan jenis transaksi
+        cursor.execute('SELECT * FROM transactions WHERE symbol = ? AND type = ? ORDER BY timestamp DESC LIMIT 1', (symbol, transaction_type))
+        latest_transaction = cursor.fetchone()
 
-def main():
-    for symbol in ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']:
-        logging.info(f"Memeriksa transaksi untuk {symbol}")
-        latest_buy_price = get_latest_buy_price(symbol)
-        if latest_buy_price is not None:
-            logging.info(f"Harga pembelian terakhir untuk {symbol}: {latest_buy_price}")
+        # Menutup koneksi database
+        conn.close()
+
+        if latest_transaction:
+            logging.info(f"Transaksi Terakhir {transaction_type} untuk {symbol}: {latest_transaction}")
+            return latest_transaction
         else:
-            logging.info(f"Tidak ada transaksi pembelian terakhir untuk {symbol}.")
-
-        latest_sell_price = get_latest_sell_price(symbol)
-        if latest_sell_price is not None:
-            logging.info(f"Harga penjualan terakhir untuk {symbol}: {latest_sell_price}")
-        else:
-            logging.info(f"Tidak ada transaksi penjualan terakhir untuk {symbol}.")
+            logging.info(f"Tidak ada transaksi {transaction_type} terakhir untuk {symbol}.")
+            return None
+    except sqlite3.Error as e:
+        logging.error(f"Gagal mengambil transaksi terakhir dari database: {e}")
+        return None
 
 if __name__ == "__main__":
-    main()
+    for symbol in ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']:
+        logging.info(f"Memeriksa transaksi untuk {symbol}")
+        get_latest_transaction(symbol, 'buy')
+        get_latest_transaction(symbol, 'sell')

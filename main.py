@@ -9,7 +9,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
-import argparse
 import requests
 import sys
 import logging
@@ -31,7 +30,6 @@ from config.settings import (
     SELL_MULTIPLIER,
     TOLERANCE
 )
-from src.send_telegram_message import send_telegram_message
 
 # Membuat folder logs jika belum ada
 log_directory = 'logs/bot'
@@ -39,12 +37,11 @@ if not os.path.exists(log_directory):
     os.makedirs(log_directory)
 
 # Konfigurasi logging untuk menulis ke file di folder logs/bot
-log_file = os.path.join(log_directory, 'bot.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_file),
+        logging.FileHandler(f"{log_directory}/bot.log"),
         logging.StreamHandler()
     ]
 )
@@ -164,6 +161,7 @@ def load_transactions():
     try:
         cursor.execute('SELECT symbol, type, quantity, price FROM transactions')
         transactions = cursor.fetchall()
+        logging.info(f"Riwayat Transaksi: {transactions}")
         return transactions
     except sqlite3.Error as e:
         logging.error(f"Gagal memuat riwayat transaksi dari database: {e}")
@@ -185,141 +183,139 @@ def has_pending_orders():
         logging.error(f"Gagal mendapatkan open orders: {e}")
         return False
 
+# Fungsi untuk mengirim pesan Telegram
+def send_telegram_message(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {
+            'chat_id': TELEGRAM_GROUP_ID,
+            'text': message
+        }
+        response = requests.post(url, data=payload)
+        response.raise_for_status()
+        logging.info(f"Pesan Telegram terkirim: {message}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Gagal mengirim pesan Telegram: {e}")
+
+# Fungsi untuk menjalankan log status setiap satu jam
+def status_update_thread():
+    while True:
+        send_status_update()
+        time.sleep(3600)  # 3600 detik = 1 jam
+
 # Inisialisasi FastAPI
 app = FastAPI()
 
-# Model Pydantic untuk request body
+# Model Pydantic untuk permintaan pembelian
 class BuyRequest(BaseModel):
     symbol: str
     quantity: float
 
+# Model Pydantic untuk permintaan penjualan
 class SellRequest(BaseModel):
     symbol: str
     quantity: float
 
 # API untuk melakukan pembelian
 @app.post("/buy/")
-async def buy(request: BuyRequest):
+def buy(request: BuyRequest):
     symbol = request.symbol
     quantity = request.quantity
 
+    if symbol not in SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"Simbol {symbol} tidak didukung")
+
     if has_pending_orders():
-        logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
-        return {"message": "Ada pending order, menunggu 5 menit sebelum melanjutkan."}
+        raise HTTPException(status_code=400, detail="Ada pending order")
 
     last_price = get_last_price(symbol)
     if last_price is None:
-        return {"message": f"Gagal mendapatkan harga terakhir untuk {symbol}"}
+        raise HTTPException(status_code=400, detail=f"Gagal mendapatkan harga terakhir untuk {symbol}")
 
     step_size, min_qty, max_qty = get_symbol_info(symbol)
-    if step_size is not None and min_qty is not None and max_qty is not None:
-        quantity = round_quantity(quantity, step_size)
-        quantity = max(quantity, min_qty)
-        quantity = min(quantity, max_qty)
+    if step_size is None or min_qty is None or max_qty is None:
+        raise HTTPException(status_code=400, detail=f"Gagal mendapatkan informasi simbol untuk {symbol}")
 
-        if quantity > 0 and can_buy_asset(*get_balances(), last_price, quantity):
-            buy_asset(symbol, quantity)
-            return {"message": f"Beli {quantity} {symbol} berhasil"}
-        else:
-            return {"message": f"Tidak cukup saldo untuk membeli {quantity} {symbol}"}
-    else:
-        return {"message": f"Tidak ditemukan informasi simbol untuk {symbol}"}
+    quantity = round_quantity(quantity, step_size)
+    quantity = max(quantity, min_qty)
+    quantity = min(quantity, max_qty)
+
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail=f"Jumlah aset {symbol} tidak valid")
+
+    usdt_free, _ = get_balances()
+    if not can_buy_asset(usdt_free, last_price, quantity):
+        raise HTTPException(status_code=400, detail=f"Saldo USDT tidak cukup untuk membeli {symbol}")
+
+    order = buy_asset(symbol, quantity)
+    if order is None:
+        raise HTTPException(status_code=500, detail=f"Gagal membeli {symbol}")
+
+    return {
+        "symbol": symbol,
+        "quantity": quantity,
+        "price": last_price,
+        "status": "success"
+    }
 
 # API untuk melakukan penjualan
 @app.post("/sell/")
-async def sell(request: SellRequest):
+def sell(request: SellRequest):
     symbol = request.symbol
     quantity = request.quantity
 
+    if symbol not in SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"Simbol {symbol} tidak didukung")
+
     if has_pending_orders():
-        logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
-        return {"message": "Ada pending order, menunggu 5 menit sebelum melanjutkan."}
+        raise HTTPException(status_code=400, detail="Ada pending order")
 
-    asset = symbol.replace('USDT', '')
-    asset_balances = get_balances()[1]
-    asset_balance = asset_balances.get(asset, 0.0)
+    last_price = get_last_price(symbol)
+    if last_price is None:
+        raise HTTPException(status_code=400, detail=f"Gagal mendapatkan harga terakhir untuk {symbol}")
 
-    if asset_balance == 0.0:
-        return {"message": f"Tidak memiliki aset {asset} untuk dijual"}
+    step_size, min_qty, max_qty = get_symbol_info(symbol)
+    if step_size is None or min_qty is None or max_qty is None:
+        raise HTTPException(status_code=400, detail=f"Gagal mendapatkan informasi simbol untuk {symbol}")
 
-    if quantity > asset_balance:
-        return {"message": f"Jumlah {quantity} {asset} melebihi saldo yang tersedia"}
+    quantity = round_quantity(quantity, step_size)
+    quantity = max(quantity, min_qty)
+    quantity = min(quantity, max_qty)
 
-    sell_asset(symbol, quantity)
-    return {"message": f"Jual {quantity} {symbol} berhasil"}
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail=f"Jumlah aset {symbol} tidak valid")
+
+    order = sell_asset(symbol, quantity)
+    if order is None:
+        raise HTTPException(status_code=500, detail=f"Gagal menjual {symbol}")
+
+    return {
+        "symbol": symbol,
+        "quantity": quantity,
+        "price": last_price,
+        "status": "success"
+    }
 
 # API untuk melakukan pengecekan saldo
 @app.get("/balance/")
-async def get_balance():
+def get_balance():
     usdt_free, asset_balances = get_balances()
     return {
         "usdt_free": usdt_free,
         "asset_balances": asset_balances
     }
 
-# Fungsi untuk menjalankan bot secara berkelanjutan
-def run_bot():
-    last_status_update = time.time()
-    transactions = load_transactions()
-    buy_prices = {symbol: None for symbol in SYMBOLS}
-
+# Fungsi untuk menjalankan log status setiap satu jam
+def status_update_thread():
     while True:
-        if has_pending_orders():
-            logging.info("Ada pending order, menunggu 5 menit sebelum melanjutkan.")
-            time.sleep(CACHE_LIFETIME)  # 5 menit
-            continue
+        send_status_update()
+        time.sleep(3600)  # 3600 detik = 1 jam
 
-        usdt_free, asset_balances = get_balances()
-        logging.info(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
-        send_telegram_message(f"Saldo USDT: {usdt_free}, Saldo Aset: {asset_balances}")
+# Menjalankan thread untuk log status setiap satu jam
+status_thread = threading.Thread(target=status_update_thread, daemon=True)
+status_thread.start()
 
-        # Bagi saldo USDT merata antara semua simbol
-        usdt_per_symbol = usdt_free / len(SYMBOLS)
-
-        for symbol in SYMBOLS:
-            last_price = get_last_price(symbol)
-            if last_price is None:
-                continue
-
-            asset = symbol.replace('USDT', '')
-            asset_balance = asset_balances.get(asset, 0.0)
-
-            if asset_balance == 0.0:
-                # Membeli aset jika tidak memiliki aset tersebut
-                quantity = usdt_per_symbol * BUY_MULTIPLIER / last_price
-                step_size, min_qty, max_qty = get_symbol_info(symbol)
-
-                if step_size is not None and min_qty is not None and max_qty is not None:
-                    quantity = round_quantity(quantity, step_size)
-                    quantity = max(quantity, min_qty)
-                    quantity = min(quantity, max_qty)
-
-                    if quantity > 0 and can_buy_asset(usdt_free, last_price, quantity):
-                        buy_asset(symbol, quantity)
-                        buy_prices[symbol] = last_price
-                        time.sleep(CACHE_LIFETIME)  # 5 menit
-            else:
-                # Menjual aset jika harga naik 3%
-                sell_price = last_price * SELL_MULTIPLIER
-                if sell_price >= last_price * (1 + TOLERANCE):
-                    buy_price = buy_prices.get(symbol, None)
-                    if buy_price is not None and sell_price > buy_price:
-                        sell_asset(symbol, asset_balance)
-                        time.sleep(CACHE_LIFETIME)  # 5 menit
-
-        # Mengirimkan status saldo setiap satu jam
-        if time.time() - last_status_update >= 3600:  # 3600 detik = 1 jam
-            send_status_update()
-            last_status_update = time.time()
-
-        time.sleep(CACHE_LIFETIME)
-
-# Menjalankan bot dalam thread terpisah
-bot_thread = threading.Thread(target=run_bot)
-bot_thread.daemon = True
-bot_thread.start()
-
-# Menjalankan FastAPI
+# Menjalankan aplikasi FastAPI
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8080)
