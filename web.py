@@ -51,6 +51,9 @@ class TradeRequest(BaseModel):
 class BalanceResponse(BaseModel):
     balance: float
 
+class AssetRequest(BaseModel):
+    symbol: str
+
 # Initialize Binance client
 client = Client(API_KEY, API_SECRET)
 
@@ -65,25 +68,25 @@ async def buy_asset(request: TradeRequest):
         ticker = client.get_symbol_ticker(symbol=request.symbol)
         current_price = float(ticker['price'])
         logger.info(f"Current price for {request.symbol}: {current_price}")
-        
+
         # Get symbol info
         symbol_info = client.get_symbol_info(request.symbol)
         min_notional = float(next((f['minNotional'] for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), 10))
-        
+
         # Adjust USDT amount if needed to meet minimum notional
         usdt_amount = request.usdt_amount
         if usdt_amount < min_notional:
             usdt_amount = min_notional + 0.1  # Add a small buffer to ensure we meet the minimum
             logger.info(f"Adjusting USDT amount from {request.usdt_amount} to {usdt_amount} to meet minimum notional requirement")
-        
+
         # Calculate quantity and log it
         quantity = usdt_amount / current_price
         logger.info(f"Calculated quantity to buy: {quantity} {request.symbol}")
-        
+
         # Execute buy and get result
         result = trade_manager.execute_buy(request.symbol, quantity)
         logger.info(f"Buy execution result: {result}")
-        
+
         return {
             "message": result,
             "adjusted_usdt": usdt_amount if usdt_amount > request.usdt_amount else None,
@@ -101,17 +104,17 @@ async def sell_asset(request: TradeRequest):
         ticker = client.get_symbol_ticker(symbol=request.symbol)
         current_price = float(ticker['price'])
         logger.info(f"Current price for {request.symbol}: {current_price}")
-        
+
         # Get symbol info for precision and limits
         symbol_info = client.get_symbol_info(request.symbol)
         min_notional = float(next((f['minNotional'] for f in symbol_info['filters'] if f['filterType'] == 'MIN_NOTIONAL'), 10))
-        
+
         # Get current balance
         balances = get_balances(client)
         asset = request.symbol.replace('USDT', '')
         available_balance = float(balances.get(asset, {}).get('free', 0))
         logger.info(f"Available balance: {available_balance} {asset}")
-        
+
         # Calculate quantity to sell
         if request.percentage is not None:
             # Sell percentage of holdings
@@ -121,7 +124,7 @@ async def sell_asset(request: TradeRequest):
         else:
             # Sell by USDT amount
             quantity = min(request.usdt_amount / current_price, available_balance)
-        
+
         # Check if total value meets minimum notional
         total_value = quantity * current_price
         if total_value < min_notional:
@@ -134,9 +137,9 @@ async def sell_asset(request: TradeRequest):
                 error_msg = f"Order value ({total_value:.2f} USDT) is below minimum ({min_notional} USDT) and not enough balance to adjust"
                 logger.error(error_msg)
                 raise HTTPException(status_code=400, detail=error_msg)
-        
+
         logger.info(f"Calculated quantity to sell: {quantity} {request.symbol}")
-        
+
         # Get lot size filter for precision
         lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
         if lot_size_filter:
@@ -144,11 +147,11 @@ async def sell_asset(request: TradeRequest):
             # Round quantity to valid step size
             quantity = round(quantity - (quantity % step_size), len(str(step_size).split('.')[1]))
             logger.info(f"Adjusted quantity to step size: {quantity} {request.symbol}")
-        
+
         # Execute sell
         result = trade_manager.execute_sell(request.symbol, quantity)
         logger.info(f"Sell execution result: {result}")
-        
+
         return {
             "message": result,
             "quantity": quantity,
@@ -176,6 +179,37 @@ async def get_assets():
         assets = {symbol: balances.get(symbol.replace('USDT', ''), {}).get('free', 0) for symbol in SYMBOLS}
         return assets
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/get_asset")
+async def get_specific_asset(request: AssetRequest):
+    try:
+        # Get the symbol from request
+        symbol = request.symbol.upper()
+
+        # Get all balances
+        balances = get_balances(client)
+
+        # Check if the requested symbol exists in balances
+        if symbol in balances:
+            return {
+                symbol: {
+                    "free": balances[symbol]["free"],
+                    "locked": balances[symbol]["locked"],
+                    "total": balances[symbol]["total"]
+                }
+            }
+        else:
+            # If symbol not found, return zero balance
+            return {
+                symbol: {
+                    "free": 0,
+                    "locked": 0,
+                    "total": 0
+                }
+            }
+    except Exception as e:
+        logger.error(f"Error in get_specific_asset: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 if __name__ == "__main__":
