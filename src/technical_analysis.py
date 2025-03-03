@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
-import ta
+from ta.trend import SMAIndicator
+from ta.volatility import BollingerBands
+from ta.momentum import RSIIndicator, StochasticRSIIndicator
 
 class TechnicalAnalysis:
     def __init__(self,
@@ -31,26 +33,31 @@ class TechnicalAnalysis:
 
     def analyze(self, df):
         # Calculate Bollinger Bands
-        df['bb_middle'] = ta.sma(df['close'], self.bb_length)
-        df['bb_std'] = df['close'].rolling(window=self.bb_length).std()
-        df['bb_upper'] = df['bb_middle'] + (self.bb_std * df['bb_std'])
-        df['bb_lower'] = df['bb_middle'] - (self.bb_std * df['bb_std'])
+        bb_indicator = BollingerBands(close=df['close'], window=self.bb_length, window_dev=self.bb_std)
+        df['bb_middle'] = bb_indicator.bollinger_mavg()
+        df['bb_upper'] = bb_indicator.bollinger_hband()
+        df['bb_lower'] = bb_indicator.bollinger_lband()
 
         # Calculate Moving Averages
-        df['short_ma'] = ta.sma(df['close'], self.short_ma_length)
-        df['long_ma'] = ta.sma(df['close'], self.long_ma_length)
+        df['short_ma'] = SMAIndicator(close=df['close'], window=self.short_ma_length).sma_indicator()
+        df['long_ma'] = SMAIndicator(close=df['close'], window=self.long_ma_length).sma_indicator()
 
         # Calculate RSI
-        df['rsi'] = ta.rsi(df['close'], self.rsi_length)
+        df['rsi'] = RSIIndicator(close=df['close'], window=self.rsi_length).rsi()
 
         # Calculate Stochastic RSI
-        stoch_rsi = ta.stoch_rsi(df['close'], window=self.stoch_length, smooth1=self.smooth_k, smooth2=self.smooth_d)
-        df['stoch_k'] = stoch_rsi['STOCHRSIk_14_14_3_3'] * 100
-        df['stoch_d'] = stoch_rsi['STOCHRSId_14_14_3_3'] * 100
+        stoch_rsi = StochasticRSIIndicator(
+            close=df['close'],
+            window=self.stoch_length,
+            smooth1=self.smooth_k,
+            smooth2=self.smooth_d
+        )
+        df['stoch_k'] = stoch_rsi.stochrsi_k() * 100
+        df['stoch_d'] = stoch_rsi.stochrsi_d() * 100
 
         # Calculate Volume Moving Averages
-        df['vol_ma_short'] = ta.sma(df['volume'], self.vol_ma_short_length)
-        df['vol_ma_long'] = ta.sma(df['volume'], self.vol_ma_long_length)
+        df['vol_ma_short'] = SMAIndicator(close=df['volume'], window=self.vol_ma_short_length).sma_indicator()
+        df['vol_ma_long'] = SMAIndicator(close=df['volume'], window=self.vol_ma_long_length).sma_indicator()
 
         return df
 
