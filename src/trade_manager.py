@@ -396,6 +396,3 @@ class RiskManager:
     def get_metrics(self) -> Dict:
         """Get current risk metrics"""
         return self.metrics
-
-# Initialize trade manager
-trade_manager = TradeManager(db_manager, client)

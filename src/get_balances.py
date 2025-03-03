@@ -1,21 +1,9 @@
 import os
 import time
-import sqlite3
-import threading
-import math
-import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta
-from binance.client import Client
-from binance.exceptions import BinanceAPIException, BinanceOrderException
-
-from config.settings import API_KEY, API_SECRET, BASE_URL
+from datetime import datetime
+from binance.exceptions import BinanceAPIException
 from src.logger import logger
-
-# Inisialisasi klien Binance
-client = Client(api_key=API_KEY, api_secret=API_SECRET)
-if BASE_URL:
-    client.API_URL = BASE_URL
+from src.binance_client import get_binance_client
 
 def get_balances():
     """
@@ -23,6 +11,7 @@ def get_balances():
     Returns: dict with 'USDT' and other asset balances
     """
     try:
+        client = get_binance_client()
         account = client.get_account()
         balances = {}
 
