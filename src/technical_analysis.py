@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from ta.trend import SMAIndicator
 from ta.volatility import BollingerBands
-from ta.momentum import RSIIndicator, StochasticRSIIndicator
+from ta.momentum import RSIIndicator, StochasticOscillator
 
 class TechnicalAnalysis:
     def __init__(self,
@@ -45,15 +45,16 @@ class TechnicalAnalysis:
         # Calculate RSI
         df['rsi'] = RSIIndicator(close=df['close'], window=self.rsi_length).rsi()
 
-        # Calculate Stochastic RSI
-        stoch_rsi = StochasticRSIIndicator(
+        # Calculate Stochastic Oscillator
+        stoch = StochasticOscillator(
+            high=df['high'],
+            low=df['low'],
             close=df['close'],
             window=self.stoch_length,
-            smooth1=self.smooth_k,
-            smooth2=self.smooth_d
+            smooth_window=self.smooth_k
         )
-        df['stoch_k'] = stoch_rsi.stochrsi_k() * 100
-        df['stoch_d'] = stoch_rsi.stochrsi_d() * 100
+        df['stoch_k'] = stoch.stoch()
+        df['stoch_d'] = stoch.stoch_signal()
 
         # Calculate Volume Moving Averages
         df['vol_ma_short'] = SMAIndicator(close=df['volume'], window=self.vol_ma_short_length).sma_indicator()
