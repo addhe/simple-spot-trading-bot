@@ -227,6 +227,43 @@ class TradingBot:
             self.logger.error(f"Error calculating position size for {symbol}: {e}")
             return 0
 
+    def trade(self):
+        """Main trading loop"""
+        try:
+            while self.thread_status['main_thread']:
+                try:
+                    # Get current balances
+                    balances = get_balances()
+                    if not balances:
+                        self.logger.error("Failed to fetch balances")
+                        time.sleep(10)
+                        continue
+
+                    # Update available balance
+                    self.available_balance = balances.get('USDT', {}).get('free', 0)
+
+                    # Calculate USDT per symbol
+                    active_pairs = len(self.trading_pairs)
+                    usdt_per_symbol = self.available_balance / active_pairs if active_pairs > 0 else 0
+
+                    # Process each trading pair
+                    for symbol in self.trading_pairs:
+                        try:
+                            self.process_symbol_trade(symbol, usdt_per_symbol, balances)
+                        except Exception as e:
+                            self.logger.error(f"Error processing {symbol}: {e}")
+                            continue
+
+                    # Sleep between iterations
+                    time.sleep(10)
+
+                except Exception as e:
+                    self.logger.error(f"Error in trade loop: {e}")
+                    time.sleep(10)
+
+        except Exception as e:
+            self.logger.error(f"Critical error in trade function: {e}")
+
     def cleanup(self):
         """Cleanup resources"""
         try:
