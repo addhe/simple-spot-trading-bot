@@ -280,6 +280,44 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
+    def cleanup_monitor(self):
+        """Monitor thread for cleaning up old data"""
+        while self.thread_status['cleanup_thread']:
+            try:
+                # Get current balances
+                balances = get_balances()
+                if not balances:
+                    self.logger.error("Failed to fetch balances for cleanup")
+                    time.sleep(10)
+                    continue
+
+                # Calculate total value
+                total_value = self.calculate_total_value(balances)
+                self.logger.info(f"Current portfolio value: {total_value} USDT")
+
+                # Sleep for a while before next check
+                time.sleep(60)  # Check every minute
+
+            except Exception as e:
+                self.logger.error(f"Error in cleanup monitor: {e}")
+                time.sleep(10)
+
+    def check_app_status(self):
+        """Monitor application status"""
+        while self.thread_status['status_thread']:
+            try:
+                # Check if all threads are running
+                if not all(self.thread_status.values()):
+                    self.logger.error("One or more threads have stopped!")
+                    # You might want to implement recovery logic here
+
+                # Sleep for a while before next check
+                time.sleep(30)  # Check every 30 seconds
+
+            except Exception as e:
+                self.logger.error(f"Error in status monitor: {e}")
+                time.sleep(10)
+
     def start(self):
         """Start the trading bot"""
         try:
